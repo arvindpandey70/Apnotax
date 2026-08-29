@@ -905,12 +905,9 @@ class Customers extends CI_Controller
             $to = "$year2-03-31";
             $data = array();
             
-            // Get customer credit limit
-            $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
-            $data['credit_limit'] = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-            
-            // Get wallet balance
+            // Get wallet & credit limit balance
             $this->load->model('Wallet_model', 'wallet');
+            $data['credit_limit'] = $this->wallet->get_available_credit($user_id);
             $data['wallet_balance'] = $this->wallet->getwalletbalance($user_id);
             
             // Get package details (Active Package)
@@ -923,6 +920,9 @@ class Customers extends CI_Controller
                 $data['cpackage'] = $cpackage;
                 $active_pkg_id = $cpackage['id'];
                 
+                // Ensure financial year monthly records exist and are sanitized
+                ensure_accountancy_fy_months($user_id, $firm_id, $year, $cpackage['package_id']);
+
                 $where2 = "t1.user_id='$user_id' and t1.firm_id='$firm_id' and t1.date>='$from' and t1.date<='$to'";
                 $data['accountancy'] = $this->service->getturnoverswithpayment($where2);
                 $turnovers = !empty($data['accountancy']) ? array_column($data['accountancy'], 'turnover') : array(0);
@@ -934,14 +934,13 @@ class Customers extends CI_Controller
                 $data['accountancy'] = array();
             }
 
-            // Get all pending Monthly packages (Exclude the active package)
+            // Get all Monthly packages (Exclude active package)
             $where_pending = array(
                 'user_id' => $user_id,
                 'firm_id' => $firm_id,
                 'year' => $year,
                 'package_type' => 'Monthly',
-                'status' => 1,
-                'payment_status' => 0
+                'status' => 1
             );
             $this->db->where($where_pending);
             if ($active_pkg_id > 0) {
@@ -978,31 +977,17 @@ class Customers extends CI_Controller
             return;
         }
 
+        $this->load->model('Wallet_model', 'wallet');
+
         // Verify balance
         if ($payment_method == 'Credit Limit') {
-            $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
-            $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-            
-            $this->db->select_sum('amount');
-            $this->db->where(['user_id' => $user_id, 'type' => 'Credit limit']);
-            $credit_used = $this->db->get("purchases")->unbuffered_row()->amount;
-            $credit_used = !empty($credit_used) ? $credit_used : 0;
-            
-            $this->db->select_sum('amount');
-            $this->db->where(['user_id' => $user_id, 'payment_mode' => 'Credit Limit']);
-            $credit_used_acc = $this->db->get("acc_payment")->unbuffered_row()->amount;
-            $credit_used_acc = !empty($credit_used_acc) ? $credit_used_acc : 0;
-            
-            // To prevent double counting if renewmonthlypackage inserted both, we could be careful, but we'll sum both to be consistent with wallet logic
-            $credit_used += $credit_used_acc;
-            $available_credit = $credit_limit - $credit_used;
+            $available_credit = $this->wallet->get_available_credit($user_id);
 
             if ($available_credit < $amount) {
                 echo json_encode(['status' => false, 'message' => 'Insufficient Credit Limit. Available credit is ₹' . number_format($available_credit, 2)]);
                 return;
             }
         } else {
-            $this->load->model('Wallet_model', 'wallet');
             $wallet_balance = $this->wallet->getwalletbalance($user_id);
 
             if ($wallet_balance < $amount) {
@@ -1059,31 +1044,17 @@ class Customers extends CI_Controller
             return;
         }
 
+        $this->load->model('Wallet_model', 'wallet');
+
         // Verify balance
         if ($payment_method == 'Credit Limit') {
-            $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
-            $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-            
-            $this->db->select_sum('amount');
-            $this->db->where(['user_id' => $user_id, 'type' => 'Credit limit']);
-            $credit_used = $this->db->get("purchases")->unbuffered_row()->amount;
-            $credit_used = !empty($credit_used) ? $credit_used : 0;
-            
-            $this->db->select_sum('amount');
-            $this->db->where(['user_id' => $user_id, 'payment_mode' => 'Credit Limit']);
-            $credit_used_acc = $this->db->get("acc_payment")->unbuffered_row()->amount;
-            $credit_used_acc = !empty($credit_used_acc) ? $credit_used_acc : 0;
-            
-            $credit_used += $credit_used_acc;
-            
-            $available_credit = $credit_limit - $credit_used;
+            $available_credit = $this->wallet->get_available_credit($user_id);
 
             if ($available_credit < $amount) {
                 echo json_encode(['status' => false, 'message' => 'Insufficient Credit Limit. Available credit is ₹' . number_format($available_credit, 2)]);
                 return;
             }
         } else {
-            $this->load->model('Wallet_model', 'wallet');
             $wallet_balance = $this->wallet->getwalletbalance($user_id);
 
             if ($wallet_balance < $amount) {
@@ -1140,26 +1111,6 @@ class Customers extends CI_Controller
                 ];
                 $this->db->insert('accountancy', $acc_data);
             }
-            
-            // 3. Insert purchase to deduct from wallet
-            $purchase_type = ($payment_method == 'Credit Limit') ? 'Credit limit' : 'Monthly';
-            $this->db->insert('purchases', [
-                'date'       => date('Y-m-d'),
-                'year'       => $pkg['year'],
-                'type'       => $purchase_type,
-                'user_id'    => $user_id,
-                'service_id' => 1,
-                'firm_id'    => $pkg['firm_id'],
-                'service'    => 'Account Work Monthly (Pending Renewal - ' . date('F Y', strtotime($pkg['purchase_date'])) . ')',
-                'rate'       => $amount,
-                'subtotal'   => $amount,
-                'gst_amount' => 0,
-                'gst_enabled'=> 0,
-                'amount'     => $amount,
-                'status'     => 0,
-                'added_on'   => date('Y-m-d H:i:s'),
-                'updated_on' => date('Y-m-d H:i:s'),
-            ]);
         }
 
         $this->db->trans_complete();
@@ -1228,7 +1179,7 @@ class Customers extends CI_Controller
             // Handle file upload
             if (isset($_FILES['file']['tmp_name']) && !empty($_FILES['file']['tmp_name'])) {
                 $upload_path = './assets/documents/old_data/';
-                $allowed_types = 'gif|jpg|jpeg|png|pdf|doc|docx|xls|xlsx|zip|rar';
+                $allowed_types = 'gif|jpg|jpeg|png|pdf|doc|docx|xls|xlsx|zip|rar|csv|txt|7z';
                 $file_name = generate_slug($customer['name'] . '-' . $data['service_id'] . '-' . time());
 
                 $upload = upload_file('file', $upload_path, $allowed_types, $file_name);

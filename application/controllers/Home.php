@@ -27,18 +27,8 @@ class Home extends CI_Controller
             $user = getuser();
             $data['user'] = $user;
             
-            $customer = $this->db->get_where('customers', ['user_id' => $user['id']])->unbuffered_row('array');
-            $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-            
-            $this->db->select_sum('amount');
-            $this->db->where(['user_id' => $user['id'], 'type' => 'Credit limit']);
-            $used_credit = $this->db->get("purchases")->unbuffered_row()->amount;
-            $used_credit = !empty($used_credit) ? (float)$used_credit : 0.00;
-            
-            $available_limit = $credit_limit - $used_credit;
-            if ($available_limit < 0) $available_limit = 0;
-            
-            $data['available_credit_limit'] = $available_limit;
+            $this->load->model('Wallet_model', 'wallet');
+            $data['available_credit_limit'] = $this->wallet->get_available_credit($user['id']);
         } elseif ($this->session->role != 'admin') {
             $user = getuser();
             $data['balances'] = $this->employee->getemployeebalance($user['emp_id']);

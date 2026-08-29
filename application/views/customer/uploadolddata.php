@@ -60,9 +60,9 @@ $button='';
                                         <div class="col-md-6">
                                             <div class="form-group">
                                                 <?php
-                                                    $year=!empty($year)?$year:date('Y');
-                                                    $attributes=array("id"=>"year","Placeholder"=>"Year (Optional)","autocomplete"=>"off");
-                                                    echo create_form_input("text","year","Year",false,$year,$attributes); 
+                                                    $year=!empty($year)?$year:'';
+                                                    $attributes=array("id"=>"year","Placeholder"=>"e.g. 2023-24 or 2024","autocomplete"=>"off");
+                                                    echo create_form_input("text","year","Year (Optional)",false,$year,$attributes); 
                                                 ?>
                                             </div>
                                         </div>

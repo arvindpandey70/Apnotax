@@ -62,6 +62,8 @@ $route['register.php'] = 'website/register';
 $route['enterotp.php'] = 'website/enterotp';
 $route['forgotpassword.php'] = 'website/forgotpassword';
 $route['resetpassword.php'] = 'website/resetpassword';
+$route['resendotp'] = 'login/resendotp';
+$route['resendotp.php'] = 'login/resendotp';
 $route['unsubscribe'] = 'home/unsubscribe';
 
 $route['defaultimage'] = 'home/image';

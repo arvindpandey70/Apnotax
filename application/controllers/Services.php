@@ -1590,6 +1590,9 @@ class Services extends CI_Controller
                         }
                         $result = $this->db->insert("customer_packages", $data);
                         if ($result) {
+                            // Ensure accountancy records exist for historical + current months of the financial year
+                            ensure_accountancy_fy_months($user['id'], $firm_id, $year, $data['package_id']);
+
                             if ($type == "Monthly") {
                                 // --- NEW FEATURE: BACKFILL PENDING MONTHS ---
                                 if (!empty($month_val)) {
@@ -1916,15 +1919,7 @@ class Services extends CI_Controller
                     
                     if ($is_credit_limit) {
                         $single['type'] = 'Credit limit'; // Save in DB as Credit limit for Wallet_model and auto-debit
-                        $customer = $this->db->get_where('customers', ['user_id' => $user['id']])->unbuffered_row('array');
-                        $total_credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-                        
-                        $this->db->select_sum('amount');
-                        $this->db->where(['user_id' => $user['id'], 'type' => 'Credit limit']);
-                        $used_credit = $this->db->get("purchases")->unbuffered_row()->amount;
-                        $used_credit = !empty($used_credit) ? (float)$used_credit : 0;
-                        
-                        $balance = $total_credit_limit - $used_credit;
+                        $balance = $this->wallet->get_available_credit($user['id']);
                     } else {
                         $balance = $this->wallet->getwalletbalance($user['id']);
                     }

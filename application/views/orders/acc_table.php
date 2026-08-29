@@ -47,9 +47,20 @@
                 $other_fee = $single['other_fee'] ?? 0;
                 $total_other += $other_fee;
                 $balance = $outstanding + $acc_fees + $other_fee;
-                if ($single['due_date'] < $date && $paid < $balance) {
+
+                // Sanitize due_date to avoid sentinel 0000-00-00 dates
+                $raw_due = $single['due_date'] ?? '';
+                if (!empty($raw_due) && $raw_due != '0000-00-00' && strtotime($raw_due) !== false) {
+                    $row_due_date = $raw_due;
+                } else if (!empty($single['date'])) {
+                    $row_due_date = date('Y-m-06', strtotime('+1 month', strtotime($single['date'])));
+                } else {
+                    $row_due_date = '';
+                }
+
+                if (!empty($row_due_date) && $row_due_date < $date && $paid < $balance) {
                     $balance -= $paid;
-                    $date1 = new DateTime($single['due_date']);
+                    $date1 = new DateTime($row_due_date);
                     $date2 = new DateTime($date);
 
                     // Calculate the difference
@@ -85,7 +96,7 @@
                     }
                     $result[$month] = array(
                         'turnover' => $single['turnover'],
-                        'due_date' => $single['due_date'],
+                        'due_date' => $row_due_date,
                         'paid' => $paid
                     );
                     $prev[] = $month;
@@ -108,8 +119,8 @@
                             if ($isPastMonth) {
                                 $auto_debit_status_label = ($total > 0) ? 'Admin Renew' : 'Renewed';
                             } else {
-                                if (!empty($single['due_date'])) {
-                                    $dueDateObj = new DateTime($single['due_date']);
+                                if (!empty($row_due_date)) {
+                                    $dueDateObj = new DateTime($row_due_date);
                                     $dueDateObj->setTime(0, 0, 0);
                                     $interval = $todayDate->diff($dueDateObj);
                                     $daysLeft = (int)$interval->format('%R%a');
@@ -154,7 +165,7 @@
                         <?= $this->amount->toDecimal($balance, false); ?>
                     </td>
                     <td>
-                        <?= $single['due_date'] != '' ? date('d-m-Y F', strtotime($single['due_date'])) : '--'; ?>
+                        <?= !empty($row_due_date) ? date('d-m-Y F', strtotime($row_due_date)) : '--'; ?>
                     </td>
                     <td><?= $days; ?></td>
                     <td class="text-center">
@@ -165,7 +176,7 @@
                         <?php } ?>
                     </td>
                     <?php if ($renewalMethod === 'ADMIN') { ?>
-                        <?php if ($paid == 0) { ?>
+                        <?php if ($balance > 0 || $total > 0) { ?>
                             <td class="text-center">
                                 <button type="button" class="btn btn-sm btn-primary renew-btn" 
                                     data-id="<?= $single['id']; ?>" 

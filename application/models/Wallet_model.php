@@ -81,6 +81,28 @@ class Wallet_model extends CI_Model{
         return round($balance, 2);
     }
     
+    public function get_used_credit($user_id){
+        $this->db->select_sum('amount');
+        $this->db->where(['user_id' => $user_id, 'type' => 'Credit limit']);
+        $purchases_credit = $this->db->get("purchases")->unbuffered_row()->amount;
+        $purchases_credit = !empty($purchases_credit) ? (float)$purchases_credit : 0.00;
+
+        $this->db->select_sum('amount');
+        $this->db->where(['user_id' => $user_id, 'payment_mode' => 'Credit Limit']);
+        $acc_credit = $this->db->get("acc_payment")->unbuffered_row()->amount;
+        $acc_credit = !empty($acc_credit) ? (float)$acc_credit : 0.00;
+
+        return round($purchases_credit + $acc_credit, 2);
+    }
+
+    public function get_available_credit($user_id){
+        $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
+        $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
+        $used_credit = $this->get_used_credit($user_id);
+        $available = $credit_limit - $used_credit;
+        return max(0.00, round($available, 2));
+    }
+    
     public function getsecuritydeposit($user_id){
         $this->db->select_sum('amount');
         $this->db->where(['user_id'=>$user_id]);

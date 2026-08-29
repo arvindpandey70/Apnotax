@@ -549,3 +549,141 @@ if (!function_exists('checkservicepurchase')) {
         return $service;
     }
 }
+
+if (!function_exists('get_financial_year')) {
+    function get_financial_year($date = NULL)
+    {
+        if ($date === NULL) {
+            $ts = time();
+        } else if (is_numeric($date) && strlen((string)$date) == 8) {
+            $year1 = (int)substr((string)$date, 0, 4);
+            $year2 = (int)substr((string)$date, 4, 4);
+            return array(
+                'id' => (string)$date,
+                'value' => 'TY ' . $year1 . '-' . substr((string)$year2, -2),
+                'year1' => (string)$year1,
+                'year2' => (string)$year2,
+                'start' => "$year1-04-01",
+                'end' => "$year2-03-31"
+            );
+        } else {
+            $ts = strtotime($date);
+            if ($ts === false) {
+                $ts = time();
+            }
+        }
+
+        $m = (int)date('n', $ts);
+        $y = (int)date('Y', $ts);
+
+        if ($m >= 4) {
+            $year1 = $y;
+            $year2 = $y + 1;
+        } else {
+            $year1 = $y - 1;
+            $year2 = $y;
+        }
+
+        $id = $year1 . $year2;
+        $value = 'TY ' . $year1 . '-' . substr((string)$year2, -2);
+        return array(
+            'id' => (string)$id,
+            'value' => $value,
+            'year1' => (string)$year1,
+            'year2' => (string)$year2,
+            'start' => "$year1-04-01",
+            'end' => "$year2-03-31"
+        );
+    }
+}
+
+if (!function_exists('ensure_accountancy_fy_months')) {
+    function ensure_accountancy_fy_months($user_id, $firm_id, $year, $package_id = 0)
+    {
+        if (empty($user_id) || empty($firm_id) || empty($year)) {
+            return;
+        }
+
+        $CI = &get_instance();
+        $fy = get_financial_year($year);
+        $year1 = (int)$fy['year1'];
+        $year2 = (int)$fy['year2'];
+
+        $now = time();
+        $cur_y = (int)date('Y', $now);
+        $cur_m = (int)date('n', $now);
+
+        if ($cur_y < $year1 || ($cur_y == $year1 && $cur_m < 4)) {
+            $max_index = 1;
+        } else if ($cur_y > $year2 || ($cur_y == $year2 && $cur_m >= 4)) {
+            $max_index = 12;
+        } else {
+            if ($cur_y == $year1) {
+                $max_index = $cur_m - 3;
+            } else {
+                $max_index = $cur_m + 9;
+            }
+        }
+
+        if ($max_index < 1) $max_index = 1;
+        if ($max_index > 12) $max_index = 12;
+
+        $datetime = date('Y-m-d H:i:s');
+
+        for ($idx = 1; $idx <= $max_index; $idx++) {
+            if ($idx <= 9) {
+                $m = $idx + 3;
+                $y = $year1;
+            } else {
+                $m = $idx - 9;
+                $y = $year2;
+            }
+
+            $month_start = sprintf('%04d-%02d-01', $y, $m);
+            $next_m = $m + 1;
+            $next_y = $y;
+            if ($next_m > 12) {
+                $next_m = 1;
+                $next_y++;
+            }
+            $default_due_date = sprintf('%04d-%02d-06', $next_y, $next_m);
+
+            $existing = $CI->db->get_where('accountancy', [
+                'user_id' => $user_id,
+                'firm_id' => $firm_id,
+                'date'    => $month_start
+            ])->unbuffered_row('array');
+
+            if (empty($existing)) {
+                $acc_data = array(
+                    'user_id'           => $user_id,
+                    'firm_id'           => $firm_id,
+                    'package_id'        => $package_id,
+                    'date'              => $month_start,
+                    'turnover'          => 0,
+                    'other_fee'         => 0,
+                    'due_date'          => $default_due_date,
+                    'added_by'          => $user_id,
+                    'status'            => 1,
+                    'auto_debit_status' => 'Pending',
+                    'added_on'          => $datetime,
+                    'updated_on'        => $datetime
+                );
+                $CI->db->insert('accountancy', $acc_data);
+            } else {
+                $updates = array();
+                if (empty($existing['due_date']) || $existing['due_date'] == '0000-00-00' || strtotime($existing['due_date']) === false) {
+                    $updates['due_date'] = $default_due_date;
+                }
+                if (empty($existing['package_id']) && !empty($package_id)) {
+                    $updates['package_id'] = $package_id;
+                }
+                if (!empty($updates)) {
+                    $updates['updated_on'] = $datetime;
+                    $CI->db->update('accountancy', $updates, ['id' => $existing['id']]);
+                }
+            }
+        }
+    }
+}
+

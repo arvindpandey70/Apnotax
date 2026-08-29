@@ -20,13 +20,11 @@ class Creditlimit extends CI_Controller
                                           ->from('customers as t1')
                                           ->get()->result_array();
                                           
+            $this->load->model('Wallet_model', 'wallet');
             // Calculate used credit for all customers
             if (!empty($data['customers'])) {
                 foreach ($data['customers'] as $key => $cust) {
-                    $this->db->select_sum('amount');
-                    $this->db->where(['user_id' => $cust['user_id'], 'type' => 'Credit limit']);
-                    $used_credit = $this->db->get("purchases")->unbuffered_row()->amount;
-                    $data['customers'][$key]['used_credit'] = !empty($used_credit) ? (float)$used_credit : 0.00;
+                    $data['customers'][$key]['used_credit'] = $this->wallet->get_used_credit($cust['user_id']);
                 }
             }
             
@@ -36,6 +34,7 @@ class Creditlimit extends CI_Controller
         
         // Fetch current user details
         $user = getuser();
+        $this->load->model('Wallet_model', 'wallet');
         
         // Fetch customer record for this user
         $customer = $this->db->get_where('customers', ['user_id' => $user['id']])->unbuffered_row('array');
@@ -45,14 +44,9 @@ class Creditlimit extends CI_Controller
             $credit_limit = (float)$customer['credit_limit'];
         }
         
-        // Calculate used credit
-        $this->db->select_sum('amount');
-        $this->db->where(['user_id' => $user['id'], 'type' => 'Credit limit']);
-        $used_credit = $this->db->get("purchases")->unbuffered_row()->amount;
-        $used_credit = !empty($used_credit) ? (float)$used_credit : 0.00;
-        
-        $available_limit = $credit_limit - $used_credit;
-        if ($available_limit < 0) $available_limit = 0;
+        // Calculate used credit and available limit
+        $used_credit = $this->wallet->get_used_credit($user['id']);
+        $available_limit = $this->wallet->get_available_credit($user['id']);
         
         $data['credit_limit'] = $credit_limit;
         $data['used_credit'] = $used_credit;

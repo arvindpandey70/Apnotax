@@ -80,7 +80,11 @@ class Login extends CI_Controller {
                 $data['old']=$result['old'];
                 $result=$this->customer->savecustomer($data);
                 $this->session->set_userdata('mobile',$mobile);
+                if(!empty($data['email'])){
+                    $this->session->set_userdata('email',$data['email']);
+                }
                 $this->session->set_userdata('otp_purpose','register');
+                $this->session->set_flashdata('msg','OTP has been sent to your registered contact details.');
                 redirect('enterotp.php');
             }
             else{
@@ -130,7 +134,11 @@ class Login extends CI_Controller {
                     }
                 }
                 $this->session->set_userdata('mobile',$mobile);
+                if(!empty($user['email'])){
+                    $this->session->set_userdata('email',$user['email']);
+                }
                 $this->session->set_userdata('otp_purpose','forgot');
+                $this->session->set_flashdata('msg','OTP has been sent to reset your password.');
                 redirect('enterotp.php');
             }
 
@@ -139,11 +147,47 @@ class Login extends CI_Controller {
         }
         redirect('forgotpassword.php');
     }
+
+    public function resendotp(){
+        $mobile = $this->session->mobile;
+        if(empty($mobile)){
+            $this->session->set_flashdata('err_msg', 'Session expired. Please try registering or submitting forgot password again.');
+            redirect('enterotp.php');
+        }
+
+        $result = $this->sendotp(array("username" => $mobile));
+        if($result['status'] === true){
+            $otp = $result['message'] ?? '';
+            $email = $this->session->email;
+            if(empty($email)){
+                $check = $this->account->getuser(array("mobile" => $mobile));
+                if($check['status'] === true){
+                    $email = $check['user']['email'] ?? '';
+                }
+            }
+            if(!empty($email) && !empty($otp)){
+                $this->load->helper('email');
+                $subject = 'Resend OTP - ' . PROJECT_NAME;
+                $message  = '<p>Your new OTP for ' . PROJECT_NAME . ' is: <b>' . htmlspecialchars((string)$otp, ENT_QUOTES, 'UTF-8') . '</b>.</p>';
+                $message .= '<p>OTP is valid for 30 minutes.</p>';
+                $message .= '<p>Regards,</p><p>' . htmlspecialchars(PROJECT_NAME, ENT_QUOTES, 'UTF-8') . '</p>';
+                @sendemail($email, $subject, $message);
+            }
+            $this->session->set_flashdata('msg', 'A new OTP has been sent successfully.');
+        } else {
+            $this->session->set_flashdata('err_msg', $result['message'] ?? 'Failed to resend OTP.');
+        }
+        redirect('enterotp.php');
+    }
     
     public function verifyotp(){
         if($this->input->post('verifyotp')!==NULL){
             $otp=$this->input->post('otp');
             $username=$this->session->mobile;
+            if(empty($username)){
+                $this->session->set_flashdata('err_msg','Session expired. Please request a new OTP.');
+                redirect('enterotp.php');
+            }
             $where['username']=$username;
             //$this->db->trans_start();
             $result=$this->account->verifyotp($otp,$where);
@@ -152,12 +196,12 @@ class Login extends CI_Controller {
                 $otpPurpose = $this->session->otp_purpose;
                 if($otpPurpose==='forgot'){
                     $this->session->set_userdata('forgot_verified_mobile',$username);
-                    $this->session->unset_userdata(array('mobile','otp_purpose'));
+                    $this->session->unset_userdata(array('mobile','email','otp_purpose'));
                     redirect('resetpassword.php');
                 }
                 else{
                     $this->startsession($result);
-                    $this->session->unset_userdata(array('mobile','otp_purpose'));
+                    $this->session->unset_userdata(array('mobile','email','otp_purpose'));
                     redirect('home/');
                 }
             }
@@ -253,16 +297,14 @@ class Login extends CI_Controller {
             $name=$result['name'];
             $otp=$result['otp'];
             $type=$result['type'];
-            //loginotp($mobile,$otp);
-            /*if($type!='activate'){
-                resetpassword($mobile,$name,$otp);
-                //$sms="$otp is your OTP to activate ".PROJECT_NAME." account.";
+
+            $this->session->set_userdata('dev_otp', $otp);
+
+            // Send SMS if helper function sendsms is active and configured
+            if(function_exists('sendsms')){
+                $smsMsg = "$otp is your OTP for " . PROJECT_NAME . ". Valid for 30 minutes.";
+                @sendsms($mobile, $smsMsg);
             }
-            else{
-                loginotp($mobile,$otp);
-                //$sms="$otp is your OTP to login to your ".PROJECT_NAME." account.";
-            }*/
-            //send_sms($mobile,$sms);
             return array("status"=>true,"message"=>$otp);
         }
         else{

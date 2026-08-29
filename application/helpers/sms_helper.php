@@ -81,7 +81,7 @@
             $body.="&flashsms=0&number=91$mobile&text=$message&route=2";
             $url.=$body;
             $url=htmlToPlainText($url);
-            //file_get_contents($url);
+            @file_get_contents($url);
 		}  
 	}
     if(!function_exists('htmlToPlainText')){

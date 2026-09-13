@@ -64,7 +64,7 @@ class Services extends CI_Controller
 
     /**
      * Firm-wise KYC gate for purchases.
-     * Requires a KYC row for selected firm with PAN and Aadhar.
+     * Requires an approved KYC row for selected firm (PAN and Aadhar are optional).
      */
     private function hasFirmKycForPurchase($user_id, $firm_id)
     {
@@ -72,7 +72,7 @@ class Services extends CI_Controller
         if (empty($kyc)) {
             return false;
         }
-        return !empty($kyc['pan']) && !empty($kyc['aadhar']) && isset($kyc['status']) && (int)$kyc['status'] === 1;
+        return !empty($kyc) && isset($kyc['status']) && (int)$kyc['status'] === 1;
     }
 
     public function index()

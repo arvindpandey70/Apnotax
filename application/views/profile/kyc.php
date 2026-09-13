@@ -36,9 +36,9 @@ if (!empty($kyc) && isset($kyc['status'])) {
                                                 <div class="form-group">
                                                     <div class="row">
                                                         <div class="col-md-6">
-                                                            <?php 
+                                                             <?php 
                                                                 $attributes=array("id"=>"aadhar_image","onChange"=>"getPhoto(this,'aadhar_image')","accept"=>"image/*");
-                                                                echo create_form_input("file","aadhar_image","Upload Aadhar Card Front :",true,'',$attributes); 
+                                                                echo create_form_input("file","aadhar_image","Upload Aadhar Card Front (Optional):",false,'',$attributes); 
                                                                 $aadhar_image="";
                                                                 if(!empty($kyc['aadhar_image'])){
                                                                     $aadhar_image="src='".str_replace('//assets/','/assets/',$kyc['aadhar_image'])."'";
@@ -84,8 +84,8 @@ if (!empty($kyc) && isset($kyc['status'])) {
                                                 </div>
                                                 <div class="form-group">
                                                     <?php 
-                                                        $attributes=array("Placeholder"=>"PAN",'pattern'=>'^[A-Z]{5}\d{4}[A-Z]$','title'=>"Enter Valid PAN");
-                                                        echo create_form_input("text","pan","PAN",true,$kyc['pan']??'',$attributes); 
+                                                        $attributes=array("Placeholder"=>"PAN (Optional)",'pattern'=>'^[A-Z]{5}\d{4}[A-Z]$','title'=>"Enter Valid PAN");
+                                                        echo create_form_input("text","pan","PAN (Optional)",false,$kyc['pan']??'',$attributes); 
                                                     ?>
                                                 </div>
                                                 <div class="form-group">
@@ -93,7 +93,7 @@ if (!empty($kyc) && isset($kyc['status'])) {
                                                         <div class="col-md-6">
                                                             <?php 
                                                                 $attributes=array("id"=>"pan_image","onChange"=>"getPhoto(this,'pan_image')","accept"=>"image/*");
-                                                                echo create_form_input("file","pan_image","Upload PAN Card :",true,'',$attributes); 
+                                                                echo create_form_input("file","pan_image","Upload PAN Card (Optional):",false,'',$attributes); 
                                                                 $pan_image="";
                                                                 if(!empty($kyc['pan_image'])){
                                                                     $pan_image="src='".str_replace('//assets/','/assets/',$kyc['pan_image'])."'";

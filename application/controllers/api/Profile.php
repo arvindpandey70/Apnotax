@@ -223,21 +223,22 @@ class Profile extends RestController
         $aadhar = $this->post('aadhar');
         $firm_id = $this->post('firm_id'); // Optional firm_id for per-firm KYC
 
-        if (!empty($token) && !empty($pan)) {
+        if (!empty($token)) {
             $user = $this->account->verify_token($token);
             if (!empty($user) && is_array($user) && $user['role'] == 'customer') {
-                // Validate PAN (required)
-                $checkpan = preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan);
-                if (!$checkpan) {
-                    $this->response([
-                        'status' => false,
-                        'message' => "Enter Valid PAN!"
-                    ], RestController::HTTP_OK);
-                    return;
+                // Validate PAN (optional - validate format only if provided)
+                if (!empty($pan)) {
+                    $checkpan = preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan);
+                    if (!$checkpan) {
+                        $this->response([
+                            'status' => false,
+                            'message' => "Enter Valid PAN!"
+                        ], RestController::HTTP_OK);
+                        return;
+                    }
                 }
 
-                // Aadhar is now optional - validate only if provided
-                $checkaadhar = true; // Default to true (optional)
+                // Aadhar is optional - validate only if provided
                 if (!empty($aadhar)) {
                     $checkaadhar = preg_match('/[0-9]{12}$/', $aadhar);
                     if (!$checkaadhar) {
@@ -249,30 +250,26 @@ class Profile extends RestController
                     }
                 }
 
-                if ($checkaadhar && $checkpan) {
-                    $data = array(
-                        "user_id" => $user['id'],
-                        "pan" => $pan,
-                        // Match website flow: every customer KYC submission goes for admin approval.
-                        "status" => 0
-                    );
+                $data = array(
+                    "user_id" => $user['id'],
+                    "pan" => !empty($pan) ? $pan : '',
+                    "aadhar" => !empty($aadhar) ? $aadhar : '',
+                    // Match website flow: every customer KYC submission goes for admin approval.
+                    "status" => 0
+                );
 
-                    // Add firm_id if provided
-                    if (!empty($firm_id)) {
-                        $data['firm_id'] = (int)$firm_id;
-                    }
+                // Add firm_id if provided
+                if (!empty($firm_id)) {
+                    $data['firm_id'] = (int)$firm_id;
+                }
 
-                    // Add aadhar only if provided
-                    if (!empty($aadhar)) {
-                        $data['aadhar'] = $aadhar;
-                    }
+                $status = true;
+                $message = array();
+                $upload_path = './assets/images/profile/kyc/';
+                $allowed_types = 'gif|jpg|jpeg|png|svg';
 
-                    $status = true;
-                    $message = array();
-                    $upload_path = './assets/images/profile/kyc/';
-                    $allowed_types = 'gif|jpg|jpeg|png|svg';
-
-                    // PAN image (required)
+                // PAN image (optional - only upload if provided)
+                if (!empty($_FILES['pan_image']['name'])) {
                     $upload = upload_file('pan_image', $upload_path, $allowed_types, generate_slug($user['name'] . '-pan-' . ($firm_id ? $firm_id : 'user')));
                     if ($upload['status'] === true) {
                         $data['pan_image'] = $upload['path'];
@@ -280,54 +277,54 @@ class Profile extends RestController
                         $status = false;
                         $message[] = "PAN- " . trim($upload['msg']);
                     }
+                }
 
-                    // Aadhar images (optional - only upload if provided)
-                    if (!empty($_FILES['aadhar_image']['name'])) {
-                        $upload = upload_file('aadhar_image', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-' . ($firm_id ? $firm_id : 'user')));
-                        if ($upload['status'] === true) {
-                            $data['aadhar_image'] = $upload['path'];
-                        } else {
-                            $status = false;
-                            $message[] = "Aadhar Front- " . trim($upload['msg']);
-                        }
-                    }
-
-                    if (!empty($_FILES['aadhar_back']['name'])) {
-                        $upload = upload_file('aadhar_back', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-back-' . ($firm_id ? $firm_id : 'user')));
-                        if ($upload['status'] === true) {
-                            $data['aadhar_back'] = $upload['path'];
-                        } else {
-                            $status = false;
-                            $message[] = "Aadhar Back- " . trim($upload['msg']);
-                        }
-                    }
-
-                    if ($status) {
-                        $result = $this->account->savekyc($data);
-                        if ($result['status'] === true) {
-                            $this->common->savenotification(array(
-                                'user_id' => (int) $user['id'],
-                                'type' => 'kyc',
-                                'message' => 'Your KYC documents were submitted successfully. Verification may take some time.',
-                            ));
-                            $this->common->notify_admins_kyc_pending_submission((int) $user['id'], !empty($firm_id) ? (int) $firm_id : null);
-                            $this->response([
-                                'status' => true,
-                                'message' => 'KYC submitted successfully and is pending admin approval.'
-                            ], RestController::HTTP_OK);
-                        } else {
-                            $this->response([
-                                'status' => false,
-                                'message' => $result['message']
-                            ], RestController::HTTP_OK);
-                        }
+                // Aadhar images (optional - only upload if provided)
+                if (!empty($_FILES['aadhar_image']['name'])) {
+                    $upload = upload_file('aadhar_image', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-' . ($firm_id ? $firm_id : 'user')));
+                    if ($upload['status'] === true) {
+                        $data['aadhar_image'] = $upload['path'];
                     } else {
-                        $message = implode('; ', $message);
+                        $status = false;
+                        $message[] = "Aadhar Front- " . trim($upload['msg']);
+                    }
+                }
+
+                if (!empty($_FILES['aadhar_back']['name'])) {
+                    $upload = upload_file('aadhar_back', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-back-' . ($firm_id ? $firm_id : 'user')));
+                    if ($upload['status'] === true) {
+                        $data['aadhar_back'] = $upload['path'];
+                    } else {
+                        $status = false;
+                        $message[] = "Aadhar Back- " . trim($upload['msg']);
+                    }
+                }
+
+                if ($status) {
+                    $result = $this->account->savekyc($data);
+                    if ($result['status'] === true) {
+                        $this->common->savenotification(array(
+                            'user_id' => (int) $user['id'],
+                            'type' => 'kyc',
+                            'message' => 'Your KYC documents were submitted successfully. Verification may take some time.',
+                        ));
+                        $this->common->notify_admins_kyc_pending_submission((int) $user['id'], !empty($firm_id) ? (int) $firm_id : null);
+                        $this->response([
+                            'status' => true,
+                            'message' => 'KYC submitted successfully and is pending admin approval.'
+                        ], RestController::HTTP_OK);
+                    } else {
                         $this->response([
                             'status' => false,
-                            'message' => $message
+                            'message' => $result['message']
                         ], RestController::HTTP_OK);
                     }
+                } else {
+                    $message = implode('; ', $message);
+                    $this->response([
+                        'status' => false,
+                        'message' => $message
+                    ], RestController::HTTP_OK);
                 }
             } else {
                 $this->response([
@@ -338,7 +335,7 @@ class Profile extends RestController
         } else {
             $this->response([
                 'status' => false,
-                'message' => "Token and PAN are required!"
+                'message' => "Token is required!"
             ], RestController::HTTP_OK);
         }
     }

@@ -264,42 +264,48 @@ class Profile extends CI_Controller
             $user = getuser();
             $firm_id = !empty($data['firm_id']) ? (int)$data['firm_id'] : null;
             
-            // Validate PAN (required)
-            $checkpan = preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $data['pan']);
-            if (!$checkpan) {
-                $this->session->set_flashdata("err_msg", "Enter Valid PAN!");
-                redirect($_SERVER['HTTP_REFERER']);
-                return;
+            // PAN is optional - validate format only if provided
+            $pan = !empty($data['pan']) ? trim($data['pan']) : '';
+            if ($pan !== '') {
+                $checkpan = preg_match('/^[A-Z]{5}\d{4}[A-Z]$/', $pan);
+                if (!$checkpan) {
+                    $this->session->set_flashdata("err_msg", "Enter Valid PAN!");
+                    redirect($_SERVER['HTTP_REFERER']);
+                    return;
+                }
             }
             
-            // Aadhar is now optional - validate only if provided
-            $aadhar = !empty($data['aadhar']) ? $data['aadhar'] : '';
-            $checkaadhar = empty($aadhar) ? true : preg_match('/[0-9]{12}$/', $aadhar);
+            // Aadhar is optional - validate format only if provided
+            $aadhar = !empty($data['aadhar']) ? trim($data['aadhar']) : '';
+            if ($aadhar !== '') {
+                $checkaadhar = preg_match('/[0-9]{12}$/', $aadhar);
+                if (!$checkaadhar) {
+                    $this->session->set_flashdata("err_msg", "Enter Valid Aadhar No!");
+                    redirect($_SERVER['HTTP_REFERER']);
+                    return;
+                }
+            }
             
-            if ($checkaadhar) {
-                $kyc_data = array(
-                    "user_id" => $user['id'],
-                    "pan" => $data['pan'],
-                    // Customer-submitted KYC must be approved by admin.
-                    "status" => 0
-                );
-                
-                // Add firm_id if provided
-                if (!empty($firm_id)) {
-                    $kyc_data['firm_id'] = $firm_id;
-                }
-                
-                // Add aadhar only if provided
-                if (!empty($aadhar)) {
-                    $kyc_data['aadhar'] = $aadhar;
-                }
-                
-                $status = true;
-                $message = array();
-                $upload_path = './assets/images/profile/kyc/';
-                $allowed_types = 'gif|jpg|jpeg|png|svg';
-                
-                // PAN image (required)
+            $kyc_data = array(
+                "user_id" => $user['id'],
+                "pan" => $pan,
+                "aadhar" => $aadhar,
+                // Customer-submitted KYC must be approved by admin.
+                "status" => 0
+            );
+            
+            // Add firm_id if provided
+            if (!empty($firm_id)) {
+                $kyc_data['firm_id'] = $firm_id;
+            }
+            
+            $status = true;
+            $message = array();
+            $upload_path = './assets/images/profile/kyc/';
+            $allowed_types = 'gif|jpg|jpeg|png|svg';
+            
+            // PAN image (optional - upload only if provided)
+            if (!empty($_FILES['pan_image']['name'])) {
                 $upload = upload_file('pan_image', $upload_path, $allowed_types, generate_slug($user['name'] . '-pan-' . ($firm_id ? $firm_id : 'user')));
                 if ($upload['status'] === true) {
                     $kyc_data['pan_image'] = $upload['path'];
@@ -307,42 +313,40 @@ class Profile extends CI_Controller
                     $status = false;
                     $message[] = "PAN- " . trim($upload['msg']);
                 }
-                
-                // Aadhar images (optional - only upload if provided)
-                if (!empty($_FILES['aadhar_image']['name'])) {
-                    $upload = upload_file('aadhar_image', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-' . ($firm_id ? $firm_id : 'user')));
-                    if ($upload['status'] === true) {
-                        $kyc_data['aadhar_image'] = $upload['path'];
-                    } else {
-                        $status = false;
-                        $message[] = "Aadhar Front- " . trim($upload['msg']);
-                    }
-                }
-                
-                if (!empty($_FILES['aadhar_back']['name'])) {
-                    $upload = upload_file('aadhar_back', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-back-' . ($firm_id ? $firm_id : 'user')));
-                    if ($upload['status'] === true) {
-                        $kyc_data['aadhar_back'] = $upload['path'];
-                    } else {
-                        $status = false;
-                        $message[] = "Aadhar Back- " . trim($upload['msg']);
-                    }
-                }
-
-                if ($status) {
-                    $result = $this->account->savekyc($kyc_data);
-                    if ($result['status'] === true) {
-                        $this->common->notify_admins_kyc_pending_submission($user['id'], $firm_id);
-                        $this->session->set_flashdata("msg", "KYC submitted successfully and is pending admin approval.");
-                    } else {
-                        $this->session->set_flashdata("err_msg", $result['message']);
-                    }
+            }
+            
+            // Aadhar images (optional - upload only if provided)
+            if (!empty($_FILES['aadhar_image']['name'])) {
+                $upload = upload_file('aadhar_image', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-' . ($firm_id ? $firm_id : 'user')));
+                if ($upload['status'] === true) {
+                    $kyc_data['aadhar_image'] = $upload['path'];
                 } else {
-                    $message = implode('; ', $message);
-                    $this->session->set_flashdata("err_msg", $message);
+                    $status = false;
+                    $message[] = "Aadhar Front- " . trim($upload['msg']);
+                }
+            }
+            
+            if (!empty($_FILES['aadhar_back']['name'])) {
+                $upload = upload_file('aadhar_back', $upload_path, $allowed_types, generate_slug($user['name'] . '-aadhar-back-' . ($firm_id ? $firm_id : 'user')));
+                if ($upload['status'] === true) {
+                    $kyc_data['aadhar_back'] = $upload['path'];
+                } else {
+                    $status = false;
+                    $message[] = "Aadhar Back- " . trim($upload['msg']);
+                }
+            }
+
+            if ($status) {
+                $result = $this->account->savekyc($kyc_data);
+                if ($result['status'] === true) {
+                    $this->common->notify_admins_kyc_pending_submission($user['id'], $firm_id);
+                    $this->session->set_flashdata("msg", "KYC submitted successfully and is pending admin approval.");
+                } else {
+                    $this->session->set_flashdata("err_msg", $result['message']);
                 }
             } else {
-                $this->session->set_flashdata("err_msg", "Enter Valid Aadhar No!");
+                $message = implode('; ', $message);
+                $this->session->set_flashdata("err_msg", $message);
             }
         }
         redirect($_SERVER['HTTP_REFERER']);

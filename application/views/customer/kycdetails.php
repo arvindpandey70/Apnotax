@@ -108,7 +108,7 @@ $activeFirmId = !empty($kyc_selected['firm_id']) ? (int)$kyc_selected['firm_id']
                                                                             <?php
                                                                                 $pan=!empty($kyc['pan'])?$kyc['pan']: '';
                                                                                 $attributes=array("id"=>"pan-".$key,"readonly"=>"true");
-                                                                                echo create_form_input("text","pan","PAN Number",true,$pan,$attributes);  
+                                                                                echo create_form_input("text","pan","PAN Number (Optional)",false,$pan,$attributes);  
                                                                             ?>
                                                                         </div>
                                                                     </div>
@@ -208,7 +208,7 @@ $activeFirmId = !empty($kyc_selected['firm_id']) ? (int)$kyc_selected['firm_id']
                                                                 <?php
                                                                     $pan=!empty($kyc['pan'])?$kyc['pan']: '';
                                                                     $attributes=array("id"=>"pan","readonly"=>"true");
-                                                                    echo create_form_input("text","pan","PAN Number",true,$pan,$attributes);  
+                                                                    echo create_form_input("text","pan","PAN Number (Optional)",false,$pan,$attributes);  
                                                                 ?>
                                                             </div>
                                                         </div>

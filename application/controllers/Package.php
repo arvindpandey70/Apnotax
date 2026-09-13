@@ -92,7 +92,7 @@ class Package extends CI_Controller
         if (empty($kyc)) {
             return false;
         }
-        return !empty($kyc['pan']) && !empty($kyc['aadhar']) && isset($kyc['status']) && (int)$kyc['status'] === 1;
+        return !empty($kyc) && isset($kyc['status']) && (int)$kyc['status'] === 1;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

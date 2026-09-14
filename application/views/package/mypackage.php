@@ -1087,7 +1087,7 @@ if (!empty($service_packages)) {
 
                 <div class="row g-3 align-items-start">
                     <!-- Type Selection Dropdown -->
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label fw-semibold" style="font-size:.83rem">Type</label>
                         <select id="acct-type-select" class="form-select form-select-sm">
                             <option value="">— Choose Type —</option>
@@ -1096,8 +1096,27 @@ if (!empty($service_packages)) {
                         </select>
                     </div>
 
-                    <!-- Monthly Calendar Input (shown when Monthly is selected) -->
-                    <div class="col-md-4" id="acct-monthly-calendar-wrap" style="display:none;">
+                    <!-- Start Month Calendar Input (shown when Monthly is selected) -->
+                    <div class="col-md-3" id="acct-start-month-wrap" style="display:none;">
+                        <label class="form-label fw-semibold" style="font-size:.83rem">Start Month</label>
+                        <select id="acct-start-month" class="form-select form-select-sm">
+                            <option value="04">April</option>
+                            <option value="05">May</option>
+                            <option value="06">June</option>
+                            <option value="07">July</option>
+                            <option value="08">August</option>
+                            <option value="09">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                            <option value="01">January</option>
+                            <option value="02">February</option>
+                            <option value="03">March</option>
+                        </select>
+                    </div>
+
+                    <!-- Monthly Calendar Input (Select Month / End Month) (shown when Monthly is selected) -->
+                    <div class="col-md-3" id="acct-monthly-calendar-wrap" style="display:none;">
                         <label class="form-label fw-semibold" style="font-size:.83rem">Select Month</label>
                         <select id="acct-monthly-calendar" class="form-select form-select-sm">
                             <option value="">— Select Month —</option>
@@ -1117,7 +1136,7 @@ if (!empty($service_packages)) {
                     </div>
 
                     <!-- Monthly Amount Input (shown when Monthly is selected) -->
-                    <div class="col-md-4" id="acct-monthly-amount-wrap" style="display:none;">
+                    <div class="col-md-3" id="acct-monthly-amount-wrap" style="display:none;">
                         <label class="form-label fw-semibold" style="font-size:.83rem">Monthly Amount (₹)</label>
                         <input type="number" id="acct-monthly-amount" class="form-control form-control-sm" 
                             placeholder="Enter monthly amount" min="1" step="0.01">
@@ -1186,6 +1205,8 @@ if (!empty($service_packages)) {
     <script>
         (function() {
             var typeSel = document.getElementById('acct-type-select');
+            var startMonthWrap = document.getElementById('acct-start-month-wrap');
+            var startMonthInput = document.getElementById('acct-start-month');
             var monthlyCalendarWrap = document.getElementById('acct-monthly-calendar-wrap');
             var monthlyCalendarInput = document.getElementById('acct-monthly-calendar');
             var monthlyAmountWrap = document.getElementById('acct-monthly-amount-wrap');
@@ -1204,6 +1225,10 @@ if (!empty($service_packages)) {
                     var selectedType = this.value;
                     
                     // Reset all dependent fields
+                    if (startMonthWrap) {
+                        startMonthWrap.style.display = 'none';
+                        if (startMonthInput) startMonthInput.value = '04';
+                    }
                     if (monthlyCalendarWrap) {
                         monthlyCalendarWrap.style.display = 'none';
                         monthlyCalendarInput.value = '';
@@ -1220,7 +1245,8 @@ if (!empty($service_packages)) {
                     });
 
                     if (selectedType === 'Monthly') {
-                        // Show monthly amount input only (no package selection for Monthly type)
+                        // Show start month, select month and monthly amount inputs
+                        if (startMonthWrap) startMonthWrap.style.display = 'block';
                         if (monthlyCalendarWrap) monthlyCalendarWrap.style.display = 'block';
                         monthlyAmountWrap.style.display = 'block';
                         // Hide package selection for Monthly type
@@ -1286,12 +1312,21 @@ if (!empty($service_packages)) {
                     return;
                 }
                 
+                var start_month_val = '';
                 var month_val = '';
                 if (selectedType === 'Monthly') {
-                    // For Monthly type, only amount is required (no package selection)
+                    start_month_val = startMonthInput ? startMonthInput.value : '04';
                     month_val = monthlyCalendarInput ? monthlyCalendarInput.value : '';
                     if (!month_val) {
                         alert('Please select a month!');
+                        return;
+                    }
+                    function getFyIdx(m) {
+                        var im = parseInt(m, 10);
+                        return (im >= 4) ? (im - 3) : (im + 9);
+                    }
+                    if (getFyIdx(start_month_val) > getFyIdx(month_val)) {
+                        alert('Start Month cannot be after Select Month!');
                         return;
                     }
                     amount = monthlyAmountInput ? monthlyAmountInput.value : '';
@@ -1319,6 +1354,9 @@ if (!empty($service_packages)) {
                 fd.append('id', 1);
                 fd.append('type', selectedType);
                 fd.append('amount', amount);
+                if (start_month_val) {
+                    fd.append('start_month', start_month_val);
+                }
                 if (month_val) {
                     fd.append('month', month_val);
                 }

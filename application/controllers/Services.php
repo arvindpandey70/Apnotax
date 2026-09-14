@@ -63,16 +63,11 @@ class Services extends CI_Controller
     }
 
     /**
-     * Firm-wise KYC gate for purchases.
-     * Requires an approved KYC row for selected firm (PAN and Aadhar are optional).
+     * Firm-wise KYC gate for purchases (optional).
      */
     private function hasFirmKycForPurchase($user_id, $firm_id)
     {
-        $kyc = $this->account->getkyc(['t1.user_id' => $user_id, 't1.firm_id' => $firm_id], 'single');
-        if (empty($kyc)) {
-            return false;
-        }
-        return !empty($kyc) && isset($kyc['status']) && (int)$kyc['status'] === 1;
+        return true;
     }
 
     public function index()

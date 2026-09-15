@@ -406,9 +406,29 @@ class Reports extends CI_Controller
 
         $years = getyearmonthvalues($year);
         $where = array('t1.user_id' => $user['id'], 't1.firm_id' => $firm_id, 't1.date>=' => $years['year1'] . '-04-01', 't1.date<=' => $years['year2'] . '-03-31');
-        $purchases = $this->service->getpurchases($where);
+        $purchases_db = $this->service->getpurchases($where);
+
+        $purchases = array();
+        $acct_months_seen = array();
+
+        // 1. Process actual purchases from purchases table
+        if (!empty($purchases_db)) {
+            foreach ($purchases_db as $p) {
+                $sid = (string)$p['service_id'];
+                $ym  = !empty($p['date']) ? date('Y-m', strtotime($p['date'])) : '';
+
+                if ($sid === '1') {
+                    // Deduplicate Account Work per month
+                    if (isset($acct_months_seen[$ym])) {
+                        continue; // Skip duplicate Account Work purchase in same month
+                    }
+                    $acct_months_seen[$ym] = true;
+                }
+                $purchases[] = $p;
+            }
+        }
         
-        // Add Monthly Account Work packages to purchases array for display
+        // 2. Add Monthly Account Work packages to purchases array for display (only for months not already covered)
         $this->db->select('id, user_id, firm_id, year, purchase_date as date, bill_amount, amount as base_amount, added_on, status');
         $this->db->where([
             'user_id' => $user['id'], 
@@ -419,36 +439,64 @@ class Reports extends CI_Controller
         $monthly_packages = $this->db->get('customer_packages')->result_array();
         
         if (!empty($monthly_packages)) {
-            if (empty($purchases)) $purchases = [];
+            $has_multiple_rows = count($monthly_packages) > 1;
+
             foreach ($monthly_packages as $mp) {
                 $bill_amount = (float)$mp['bill_amount'];
                 $base_amount = (float)$mp['base_amount'];
-                $months_covered = 1;
-                
-                if ($base_amount > 0) {
-                    $months_covered = round($bill_amount / $base_amount);
+                if ($base_amount <= 0 && $bill_amount > 0) {
+                    $base_amount = $bill_amount;
                 }
-                
-                // Limit to max 12 months just in case
-                if ($months_covered > 12) $months_covered = 12;
-                
-                // Distribute the amount across the elapsed months starting from April
-                for ($m = 0; $m < $months_covered; $m++) {
-                    $month_num = 4 + $m;
-                    $calc_year = $years['year1'];
-                    
-                    if ($month_num > 12) {
-                        $month_num -= 12;
-                        $calc_year = $years['year2'];
+                if ($base_amount <= 0) {
+                    $base_amount = 1500;
+                }
+
+                if ($has_multiple_rows) {
+                    $date_str = !empty($mp['date']) ? date('Y-m-01', strtotime($mp['date'])) : sprintf('%04d-%02d-01', $years['year1'], 4);
+                    $ym = date('Y-m', strtotime($date_str));
+
+                    if (!isset($acct_months_seen[$ym])) {
+                        $acct_months_seen[$ym] = true;
+                        $entry = $mp;
+                        $entry['amount'] = $base_amount;
+                        $entry['date'] = $date_str;
+                        $entry['service_id'] = '1'; // Ensure it's a string to match DB type
+                        $entry['service'] = 'Account Work Monthly';
+                        
+                        $purchases[] = $entry;
                     }
+                } else {
+                    // Single accumulated package record: distribute across covered months
+                    $months_covered = 1;
+                    if ($base_amount > 0 && $bill_amount > 0) {
+                        $months_covered = (int)round($bill_amount / $base_amount);
+                    }
+                    if ($months_covered < 1)  $months_covered = 1;
+                    if ($months_covered > 12) $months_covered = 12;
                     
-                    $entry = $mp;
-                    $entry['amount'] = $base_amount;
-                    $entry['date'] = sprintf('%04d-%02d-01', $calc_year, $month_num);
-                    $entry['service_id'] = '1'; // Ensure it's a string to match DB type
-                    $entry['service'] = 'Account Work Monthly';
-                    
-                    $purchases[] = $entry;
+                    for ($m = 0; $m < $months_covered; $m++) {
+                        $month_num = 4 + $m;
+                        $calc_year = $years['year1'];
+                        
+                        if ($month_num > 12) {
+                            $month_num -= 12;
+                            $calc_year = $years['year2'];
+                        }
+                        
+                        $date_str = sprintf('%04d-%02d-01', $calc_year, $month_num);
+                        $ym = date('Y-m', strtotime($date_str));
+
+                        if (!isset($acct_months_seen[$ym])) {
+                            $acct_months_seen[$ym] = true;
+                            $entry = $mp;
+                            $entry['amount'] = $base_amount;
+                            $entry['date'] = $date_str;
+                            $entry['service_id'] = '1'; // Ensure it's a string to match DB type
+                            $entry['service'] = 'Account Work Monthly';
+                            
+                            $purchases[] = $entry;
+                        }
+                    }
                 }
             }
         }

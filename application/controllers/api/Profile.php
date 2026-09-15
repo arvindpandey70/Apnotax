@@ -982,16 +982,6 @@ class Profile extends RestController
         if (!empty($token) && (!empty($package_id) || (!empty($firm_id) && !empty($year)))) {
             $user = $this->account->verify_token($token);
             if (!empty($user) && is_array($user) && $user['role'] == 'customer') {
-                // Check if request column exists
-                $check_column = $this->db->query("SHOW COLUMNS FROM `tf_service_packages` LIKE 'request'");
-                if ($check_column->num_rows() == 0) {
-                    $this->response([
-                        'status' => false,
-                        'message' => "Delete request feature is not available. Please contact administrator."
-                    ], RestController::HTTP_OK);
-                    return;
-                }
-
                 // Support deleting a specific package_id via POST, or fall back to first for firm/year
                 if ($package_id > 0) {
                     $service_package = $this->db->get_where(
@@ -1004,28 +994,15 @@ class Profile extends RestController
                 }
 
                 if (!empty($service_package)) {
-                    // Check if request field exists in the result
-                    if (!isset($service_package['request'])) {
-                        $service_package['request'] = 0;
-                    }
-                    // Allow request if no request (0) or if rejected (2) - can re-request after rejection
-                    if ($service_package['request'] == 0 || $service_package['request'] == 2) {
-                        if ($this->db->update('service_packages', ['request' => 1], ['id' => $service_package['id']])) {
-                            $message = $service_package['request'] == 2 ? "Package Delete Request Resubmitted! Admin will review your request." : "Package Delete Request Saved! Admin will review your request.";
-                            $this->response([
-                                'status' => true,
-                                'message' => $message
-                            ], RestController::HTTP_OK);
-                        } else {
-                            $this->response([
-                                'status' => false,
-                                'message' => "Failed to save delete request!"
-                            ], RestController::HTTP_OK);
-                        }
+                    if ($this->db->delete('service_packages', ['id' => $service_package['id']])) {
+                        $this->response([
+                            'status' => true,
+                            'message' => "Package deleted successfully!"
+                        ], RestController::HTTP_OK);
                     } else {
                         $this->response([
                             'status' => false,
-                            'message' => "Delete Request already submitted!"
+                            'message' => "Failed to delete package!"
                         ], RestController::HTTP_OK);
                     }
                 } else {
@@ -1058,16 +1035,6 @@ class Profile extends RestController
         if (!empty($token) && (!empty($package_id) || (!empty($firm_id) && !empty($year)))) {
             $user = $this->account->verify_token($token);
             if (!empty($user) && is_array($user) && $user['role'] == 'customer') {
-                // Check if request column exists
-                $check_column = $this->db->query("SHOW COLUMNS FROM `tf_customer_packages` LIKE 'request'");
-                if ($check_column->num_rows() == 0) {
-                    $this->response([
-                        'status' => false,
-                        'message' => "Delete request feature is not available. Please contact administrator."
-                    ], RestController::HTTP_OK);
-                    return;
-                }
-
                 // Support deleting a specific package_id via POST, or fall back to first for firm/year
                 if ($package_id > 0) {
                     $account_work_package = $this->db->get_where(
@@ -1082,28 +1049,15 @@ class Profile extends RestController
                 }
 
                 if (!empty($account_work_package)) {
-                    // Check if request field exists in the result
-                    if (!isset($account_work_package['request'])) {
-                        $account_work_package['request'] = 0;
-                    }
-                    // Allow request if no request (0) or if rejected (2) - can re-request after rejection
-                    if ($account_work_package['request'] == 0 || $account_work_package['request'] == 2) {
-                        if ($this->db->update('customer_packages', ['request' => 1], ['id' => $account_work_package['id']])) {
-                            $message = $account_work_package['request'] == 2 ? "Account Work Package Delete Request Resubmitted! Admin will review your request." : "Account Work Package Delete Request Saved! Admin will review your request.";
-                            $this->response([
-                                'status' => true,
-                                'message' => $message
-                            ], RestController::HTTP_OK);
-                        } else {
-                            $this->response([
-                                'status' => false,
-                                'message' => "Failed to save delete request!"
-                            ], RestController::HTTP_OK);
-                        }
+                    if ($this->db->update('customer_packages', ['status' => 0], ['id' => $account_work_package['id']])) {
+                        $this->response([
+                            'status' => true,
+                            'message' => "Account Work Package deleted successfully!"
+                        ], RestController::HTTP_OK);
                     } else {
                         $this->response([
                             'status' => false,
-                            'message' => "Delete Request already submitted!"
+                            'message' => "Failed to delete Account Work package!"
                         ], RestController::HTTP_OK);
                     }
                 } else {

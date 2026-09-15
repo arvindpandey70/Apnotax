@@ -897,22 +897,41 @@ if (!empty($service_packages)) {
             <!-- ── Already selected ── -->
             <div class="acct-status-row" style="border-left-color: <?= $is_expired && $is_unpaid ? '#dc3545' : '#28a745' ?>;">
                 <div class="acct-status-body">
-                    <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-                        <span class="pkg-type-pill" style="background:#eaf7ee;color:#28a745;border:1px solid #28a74540">
-                            <i class="fe fe-briefcase me-1" style="font-size:.68rem"></i>
-                            <?= htmlspecialchars($acct_name) ?>
-                        </span>
-                        <span class="state-pill <?= $status_class ?>">
-                            <i class="fe <?= $status_icon ?>"></i> <?= $status_label ?>
-                        </span>
-                        <span class="pkg-type-pill" style="background:#f0f9f1;color:#3a7d44;border:1px solid #b7e0be">
-                            <i class="fe fe-trending-up me-1" style="font-size:.68rem"></i><?= htmlspecialchars($pkg_type) ?>
-                        </span>
-                        <?php if ($pkg_type == 'Monthly' && !empty($package['amount'])) : ?>
-                            <span class="pkg-type-pill" style="background:#e3f2fd;color:#1976d2;border:1px solid #90caf9">
-                                <i class="fe fe-rupee me-1" style="font-size:.68rem"></i>₹<?= number_format($package['amount'], 2) ?>/month
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                        <div class="d-flex align-items-center flex-wrap gap-2">
+                            <span class="pkg-type-pill" style="background:#eaf7ee;color:#28a745;border:1px solid #28a74540">
+                                <i class="fe fe-briefcase me-1" style="font-size:.68rem"></i>
+                                <?= htmlspecialchars($acct_name) ?>
                             </span>
-                        <?php endif; ?>
+                            <span class="state-pill <?= $status_class ?>">
+                                <i class="fe <?= $status_icon ?>"></i> <?= $status_label ?>
+                            </span>
+                            <span class="pkg-type-pill" style="background:#f0f9f1;color:#3a7d44;border:1px solid #b7e0be">
+                                <i class="fe fe-trending-up me-1" style="font-size:.68rem"></i><?= htmlspecialchars($pkg_type) ?>
+                            </span>
+                            <?php if ($pkg_type == 'Monthly' && !empty($package['amount'])) : ?>
+                                <span class="pkg-type-pill" style="background:#e3f2fd;color:#1976d2;border:1px solid #90caf9">
+                                    <i class="fe fe-rupee me-1" style="font-size:.68rem"></i>₹<?= number_format($package['amount'], 2) ?>/month
+                                </span>
+                            <?php endif; ?>
+                        </div>
+
+                        <div>
+                            <?php if (empty($service_packages)) : ?>
+                                <form method="post" action="<?= base_url('package/requestdeleteaccountwork') ?>"
+                                    class="delete-pkg-form"
+                                    style="display:inline">
+                                    <input type="hidden" name="package_id" value="<?= $package['id'] ?>">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                                        <i class="fe fe-trash-2 me-1"></i>Delete Package
+                                    </button>
+                                </form>
+                            <?php else : ?>
+                                <span class="badge bg-secondary text-white px-2 py-1" style="font-size:.75rem;">
+                                    <i class="fe fe-info me-1"></i>Delete Service Packages first
+                                </span>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     <div class="d-flex flex-wrap gap-3" style="font-size:.82rem;color:#555;">
                         <?php if ($pkg_type == 'Monthly') : ?>
@@ -962,41 +981,6 @@ if (!empty($service_packages)) {
                             </div>
                         </div>
                     <?php endif; ?>
-                    
-                    <!-- Delete Request Section -->
-                    <div class="mt-3 p-3 bg-light border-top">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <div>
-                                <small class="text-muted" style="font-size:.8rem;">
-                                    <i class="fe fe-info me-1"></i>Need to delete this package?
-                                </small>
-                            </div>
-                            <?php 
-                            $request_status = isset($package['request']) ? (int)$package['request'] : 0;
-                            ?>
-                            <?php if ($request_status == 0 || $request_status == 2) : ?>
-                                <?php if (empty($service_packages)) : ?>
-                                    <form method="post" action="<?= base_url('package/requestdeleteaccountwork') ?>"
-                                        style="display:inline"
-                                        onsubmit="return confirm('Request admin to delete this Account Work package? This action cannot be undone.')">
-                                        <input type="hidden" name="package_id" value="<?= $package['id'] ?>">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                                            <i class="fe fe-trash-2 me-1"></i>Request Delete
-                                        </button>
-                                    </form>
-                                <?php else : ?>
-                                    <span class="badge bg-secondary text-white px-3 py-2">
-                                        <i class="fe fe-info me-1"></i>
-                                        Delete Service Packages first to request Account Work deletion
-                                    </span>
-                                <?php endif; ?>
-                            <?php elseif ($request_status == 1) : ?>
-                                <span class="badge bg-warning text-dark px-3 py-2">
-                                    <i class="fe fe-clock me-1"></i>Delete request pending
-                                </span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
                 </div>
                 <div class="acct-status-icon">
                     <i class="fe fe-briefcase"></i>
@@ -1087,7 +1071,7 @@ if (!empty($service_packages)) {
 
                 <div class="row g-3 align-items-start">
                     <!-- Type Selection Dropdown -->
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label fw-semibold" style="font-size:.83rem">Type</label>
                         <select id="acct-type-select" class="form-select form-select-sm">
                             <option value="">— Choose Type —</option>
@@ -1096,8 +1080,27 @@ if (!empty($service_packages)) {
                         </select>
                     </div>
 
-                    <!-- Monthly Calendar Input (shown when Monthly is selected) -->
-                    <div class="col-md-4" id="acct-monthly-calendar-wrap" style="display:none;">
+                    <!-- Start Month Calendar Input (shown when Monthly is selected) -->
+                    <div class="col-md-3" id="acct-start-month-wrap" style="display:none;">
+                        <label class="form-label fw-semibold" style="font-size:.83rem">Start Month</label>
+                        <select id="acct-start-month" class="form-select form-select-sm">
+                            <option value="04">April</option>
+                            <option value="05">May</option>
+                            <option value="06">June</option>
+                            <option value="07">July</option>
+                            <option value="08">August</option>
+                            <option value="09">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                            <option value="01">January</option>
+                            <option value="02">February</option>
+                            <option value="03">March</option>
+                        </select>
+                    </div>
+
+                    <!-- Monthly Calendar Input (Select Month / End Month) (shown when Monthly is selected) -->
+                    <div class="col-md-3" id="acct-monthly-calendar-wrap" style="display:none;">
                         <label class="form-label fw-semibold" style="font-size:.83rem">Select Month</label>
                         <select id="acct-monthly-calendar" class="form-select form-select-sm">
                             <option value="">— Select Month —</option>
@@ -1117,7 +1120,7 @@ if (!empty($service_packages)) {
                     </div>
 
                     <!-- Monthly Amount Input (shown when Monthly is selected) -->
-                    <div class="col-md-4" id="acct-monthly-amount-wrap" style="display:none;">
+                    <div class="col-md-3" id="acct-monthly-amount-wrap" style="display:none;">
                         <label class="form-label fw-semibold" style="font-size:.83rem">Monthly Amount (₹)</label>
                         <input type="number" id="acct-monthly-amount" class="form-control form-control-sm" 
                             placeholder="Enter monthly amount" min="1" step="0.01">
@@ -1186,6 +1189,8 @@ if (!empty($service_packages)) {
     <script>
         (function() {
             var typeSel = document.getElementById('acct-type-select');
+            var startMonthWrap = document.getElementById('acct-start-month-wrap');
+            var startMonthInput = document.getElementById('acct-start-month');
             var monthlyCalendarWrap = document.getElementById('acct-monthly-calendar-wrap');
             var monthlyCalendarInput = document.getElementById('acct-monthly-calendar');
             var monthlyAmountWrap = document.getElementById('acct-monthly-amount-wrap');
@@ -1204,6 +1209,10 @@ if (!empty($service_packages)) {
                     var selectedType = this.value;
                     
                     // Reset all dependent fields
+                    if (startMonthWrap) {
+                        startMonthWrap.style.display = 'none';
+                        if (startMonthInput) startMonthInput.value = '04';
+                    }
                     if (monthlyCalendarWrap) {
                         monthlyCalendarWrap.style.display = 'none';
                         monthlyCalendarInput.value = '';
@@ -1220,7 +1229,8 @@ if (!empty($service_packages)) {
                     });
 
                     if (selectedType === 'Monthly') {
-                        // Show monthly amount input only (no package selection for Monthly type)
+                        // Show start month, select month and monthly amount inputs
+                        if (startMonthWrap) startMonthWrap.style.display = 'block';
                         if (monthlyCalendarWrap) monthlyCalendarWrap.style.display = 'block';
                         monthlyAmountWrap.style.display = 'block';
                         // Hide package selection for Monthly type
@@ -1286,12 +1296,21 @@ if (!empty($service_packages)) {
                     return;
                 }
                 
+                var start_month_val = '';
                 var month_val = '';
                 if (selectedType === 'Monthly') {
-                    // For Monthly type, only amount is required (no package selection)
+                    start_month_val = startMonthInput ? startMonthInput.value : '04';
                     month_val = monthlyCalendarInput ? monthlyCalendarInput.value : '';
                     if (!month_val) {
                         alert('Please select a month!');
+                        return;
+                    }
+                    function getFyIdx(m) {
+                        var im = parseInt(m, 10);
+                        return (im >= 4) ? (im - 3) : (im + 9);
+                    }
+                    if (getFyIdx(start_month_val) > getFyIdx(month_val)) {
+                        alert('Start Month cannot be after Select Month!');
                         return;
                     }
                     amount = monthlyAmountInput ? monthlyAmountInput.value : '';
@@ -1319,6 +1338,9 @@ if (!empty($service_packages)) {
                 fd.append('id', 1);
                 fd.append('type', selectedType);
                 fd.append('amount', amount);
+                if (start_month_val) {
+                    fd.append('start_month', start_month_val);
+                }
                 if (month_val) {
                     fd.append('month', month_val);
                 }
@@ -1647,89 +1669,221 @@ if (!empty($service_packages)) {
                 recalcTotal();
             });
 
+            /* ── Intercept Package Delete Form ──────────────────────── */
+            $('body').on('submit', '.delete-pkg-form', function(e) {
+                var form = this;
+                if ($(form).data('confirmed')) {
+                    return true;
+                }
+                e.preventDefault();
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Delete Package?',
+                        text: 'Are you sure you want to delete this package? This action cannot be undone.',
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: '<i class="fe fe-trash-2 me-1"></i> Yes, Delete',
+                        cancelButtonText: 'Cancel',
+                        customClass: {
+                            popup: 'rounded-4 shadow-lg border-0',
+                            confirmButton: 'btn btn-danger px-4 rounded-pill me-2',
+                            cancelButton: 'btn btn-light px-4 rounded-pill border'
+                        },
+                        buttonsStyling: false
+                    }).then(function(result) {
+                        if (result.isConfirmed) {
+                            $(form).data('confirmed', true);
+                            form.submit();
+                        }
+                    });
+                } else {
+                    if (confirm('Are you sure you want to delete this package?')) {
+                        $(form).data('confirmed', true);
+                        form.submit();
+                    }
+                }
+            });
+
             /* ── Account Work Renewal button AJAX ──────────────────────── */
             $('body').on('click', '.renew-acct-work-btn', function() {
                 var btn = $(this);
                 var pkgId = btn.data('pkg-id');
-                var amount = parseFloat(btn.data('amount'));
+                var amount = parseFloat(btn.data('amount')) || 0;
                 var amtFmt = amount.toLocaleString('en-IN', {
                     minimumFractionDigits: 2
                 });
 
-                if (!confirm('Renew Account Work package for ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
-                    return false;
-                }
+                function executeAcctRenewal() {
+                    btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
 
-                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
-
-                $.ajax({
-                    type: 'POST',
-                    url: '<?= base_url('services/renewpackage') ?>',
-                    data: {
-                        package_id: pkgId
-                    },
-                    dataType: 'json',
-                    success: function(r) {
-                        if (r.status) {
-                            alertify.success(r.message || 'Renewal successful!');
-                            setTimeout(function() {
-                                location.reload();
-                            }, 1800);
-                        } else {
-                            alertify.error(r.message || 'Renewal failed.');
-                            if (r.redirect) setTimeout(function() {
-                                location.href = r.redirect;
-                            }, 2500);
+                    $.ajax({
+                        type: 'POST',
+                        url: '<?= base_url('services/renewpackage') ?>',
+                        data: { package_id: pkgId },
+                        dataType: 'json',
+                        success: function(r) {
+                            if (r.status) {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Renewal Successful!',
+                                        text: r.message || 'Renewal successful!',
+                                        icon: 'success',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-success px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        location.reload();
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.success(r.message || 'Renewal successful!');
+                                    setTimeout(function() { location.reload(); }, 1500);
+                                }
+                            } else {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Renewal Failed',
+                                        text: r.message || 'Renewal failed.',
+                                        icon: 'error',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-danger px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        if (r.redirect) location.href = r.redirect;
+                                        else btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.error(r.message || 'Renewal failed.');
+                                    if (r.redirect) setTimeout(function() { location.href = r.redirect; }, 2000);
+                                    btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
+                                }
+                            }
+                        },
+                        error: function() {
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({ title: 'Error', text: 'An error occurred. Please try again.', icon: 'error', confirmButtonText: 'OK' });
+                            } else if (typeof alertify !== 'undefined') {
+                                alertify.error('An error occurred. Please try again.');
+                            }
                             btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
                         }
-                    },
-                    error: function() {
-                        alertify.error('An error occurred. Please try again.');
-                        btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
+                    });
+                }
+
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Confirm Renewal',
+                        html: '<div class="text-center py-2"><p class="text-secondary mb-2">Renew Account Work package</p><h3 class="fw-bold text-danger mb-2">₹' + amtFmt + '</h3><p class="text-muted small mb-0">Amount will be deducted from your wallet balance.</p></div>',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: '<i class="fe fe-check-circle me-1"></i> Renew & Pay Now',
+                        cancelButtonText: 'Cancel',
+                        customClass: {
+                            popup: 'rounded-4 shadow-lg border-0',
+                            confirmButton: 'btn btn-danger btn-lg px-4 rounded-pill me-2',
+                            cancelButton: 'btn btn-light btn-lg px-4 rounded-pill border'
+                        },
+                        buttonsStyling: false
+                    }).then(function(result) {
+                        if (result.isConfirmed) {
+                            executeAcctRenewal();
+                        }
+                    });
+                } else {
+                    if (confirm('Renew Account Work package for ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
+                        executeAcctRenewal();
                     }
-                });
+                }
             });
 
             /* ── Pay Bill button AJAX ──────────────────────── */
             $('body').on('click', '.pay-bill-btn', function() {
-                var pkgId = $(this).data('pkg-id');
-                var amount = parseFloat($(this).data('amount'));
+                var $btn = $(this);
+                var pkgId = $btn.data('pkg-id');
+                var amount = parseFloat($btn.data('amount')) || 0;
                 var amtFmt = amount.toLocaleString('en-IN', {
                     minimumFractionDigits: 2
                 });
 
-                if (!confirm('Pay package bill of ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
-                    return false;
-                }
-                var $btn = $(this).prop('disabled', true)
-                    .html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
+                function executeBillPay() {
+                    $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
 
-                $.ajax({
-                    type: 'POST',
-                    url: '<?= base_url('package/paybill') ?>',
-                    data: {
-                        package_id: pkgId
-                    },
-                    dataType: 'json',
-                    success: function(r) {
-                        if (r.status) {
-                            alertify.success(r.message || 'Payment successful!');
-                            setTimeout(function() {
-                                location.reload();
-                            }, 1800);
-                        } else {
-                            alertify.error(r.message || 'Payment failed.');
-                            if (r.redirect) setTimeout(function() {
-                                location.href = r.redirect;
-                            }, 2500);
+                    $.ajax({
+                        type: 'POST',
+                        url: '<?= base_url('package/paybill') ?>',
+                        data: { package_id: pkgId },
+                        dataType: 'json',
+                        success: function(r) {
+                            if (r.status) {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Payment Successful!',
+                                        text: r.message || 'Payment successful!',
+                                        icon: 'success',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-success px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        location.reload();
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.success(r.message || 'Payment successful!');
+                                    setTimeout(function() { location.reload(); }, 1500);
+                                }
+                            } else {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Payment Failed',
+                                        text: r.message || 'Payment failed.',
+                                        icon: 'error',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-danger px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        if (r.redirect) location.href = r.redirect;
+                                        else $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.error(r.message || 'Payment failed.');
+                                    if (r.redirect) setTimeout(function() { location.href = r.redirect; }, 2000);
+                                    $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
+                                }
+                            }
+                        },
+                        error: function() {
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({ title: 'Error', text: 'An error occurred. Please try again.', icon: 'error', confirmButtonText: 'OK' });
+                            } else if (typeof alertify !== 'undefined') {
+                                alertify.error('An error occurred. Please try again.');
+                            }
                             $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
                         }
-                    },
-                    error: function() {
-                        alertify.error('An error occurred. Please try again.');
-                        $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
+                    });
+                }
+
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Confirm Payment',
+                        html: '<div class="text-center py-2"><p class="text-secondary mb-2">Pay package bill</p><h3 class="fw-bold text-danger mb-2">₹' + amtFmt + '</h3><p class="text-muted small mb-0">Amount will be deducted from your wallet balance.</p></div>',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: '<i class="fe fe-check-circle me-1"></i> Pay Now',
+                        cancelButtonText: 'Cancel',
+                        customClass: {
+                            popup: 'rounded-4 shadow-lg border-0',
+                            confirmButton: 'btn btn-danger btn-lg px-4 rounded-pill me-2',
+                            cancelButton: 'btn btn-light btn-lg px-4 rounded-pill border'
+                        },
+                        buttonsStyling: false
+                    }).then(function(result) {
+                        if (result.isConfirmed) {
+                            executeBillPay();
+                        }
+                    });
+                } else {
+                    if (confirm('Pay package bill of ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
+                        executeBillPay();
                     }
-                });
+                }
             });
 
 

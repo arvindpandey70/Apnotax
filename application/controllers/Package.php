@@ -84,15 +84,11 @@ class Package extends CI_Controller
     }
 
     /**
-     * Firm-wise KYC gate for package creation.
+     * Firm-wise KYC gate for package creation (optional).
      */
     private function hasFirmKycForPurchase($user_id, $firm_id)
     {
-        $kyc = $this->account->getkyc(['t1.user_id' => $user_id, 't1.firm_id' => $firm_id], 'single');
-        if (empty($kyc)) {
-            return false;
-        }
-        return !empty($kyc) && isset($kyc['status']) && (int)$kyc['status'] === 1;
+        return true;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -465,27 +461,6 @@ class Package extends CI_Controller
             return;
         }
 
-        $balance = $this->wallet->getwalletbalance($user['id']);
-
-        if ($balance < $bill_amount) {
-            $needed = $bill_amount - $balance;
-            echo json_encode([
-                'status'    => false,
-                'message'   => 'Insufficient wallet balance. Please add ₹' . number_format($needed, 2) . ' to your wallet first.',
-                'remaining' => $needed,
-                'redirect'  => base_url('mywallet/')
-            ]);
-            return;
-        }
-
-        // ── Deduct from wallet via purchases table (same mechanism as buyservice) ──
-        $services_str = $pkg['service_ids'] ?? '';
-        $s_ids = array_filter(array_map('trim', explode(',', $services_str)));
-        $services = array();
-        if (!empty($s_ids)) {
-            $services = $this->master->getservices("status='1' AND id IN ('" . implode("','", $s_ids) . "')");
-        }
-
         $datetime    = date('Y-m-d H:i:s');
         $today       = date('Y-m-d');
         $firm_id     = $pkg['firm_id'];
@@ -502,6 +477,12 @@ class Package extends CI_Controller
         $opt_data = array();
         if (!empty($pkg['service_option_ids'])) {
             $opt_data = json_decode($pkg['service_option_ids'], true) ?: array();
+        }
+        $services_str = $pkg['service_ids'] ?? '';
+        $s_ids = array_filter(array_map('trim', explode(',', $services_str)));
+        $services = array();
+        if (!empty($s_ids)) {
+            $services = $this->master->getservices("status='1' AND id IN ('" . implode("','", $s_ids) . "')");
         }
         foreach ($services as $svc) {
             $rate = (float)$svc['rate'];
@@ -520,8 +501,29 @@ class Package extends CI_Controller
             $total_gst = round(($bill_amount * 18) / 100, 2);
         }
 
-        // Insert a purchase record per service so the wallet balance reduces automatically
-        // (wallet balance = wallet credits − sum(purchases.amount) − acc_payment)
+        $total_required_amount = $bill_amount + $total_gst;
+        $wallet_balance = $this->wallet->getwalletbalance($user['id']);
+        $credit_balance = $this->wallet->get_available_credit($user['id']);
+
+        $is_credit_limit = false;
+        if ($wallet_balance >= $total_required_amount) {
+            $is_credit_limit = false;
+        } elseif ($credit_balance >= $total_required_amount) {
+            $is_credit_limit = true;
+        } else {
+            $needed = $total_required_amount - $wallet_balance;
+            echo json_encode([
+                'status'    => false,
+                'message'   => 'Insufficient funds. Wallet Balance: ₹' . number_format($wallet_balance, 2) . ', Credit Limit: ₹' . number_format($credit_balance, 2) . '. Required: ₹' . number_format($total_required_amount, 2) . '.',
+                'remaining' => $needed,
+                'redirect'  => base_url('mywallet/')
+            ]);
+            return;
+        }
+
+        $insert_type = $is_credit_limit ? 'Credit limit' : $package_type;
+
+        // Insert a purchase record per service so the balance reduces automatically
         $order_ids = array();
         foreach ($services as $svc) {
             $rate = $service_rates[$svc['id']];
@@ -538,7 +540,7 @@ class Package extends CI_Controller
             $purchase = array(
                 'date'       => $today,
                 'year'       => $year,
-                'type'       => $package_type,
+                'type'       => $insert_type,
                 'user_id'    => $user['id'],
                 'service_id' => $svc['id'],
                 'firm_id'    => $firm_id,
@@ -607,18 +609,11 @@ class Package extends CI_Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // REQUEST DELETE
+    // DELETE PACKAGE DIRECTLY
     // ─────────────────────────────────────────────────────────────────────────
 
     public function requestdelete()
     {
-        // Check column exists
-        if ($this->db->query("SHOW COLUMNS FROM `tf_service_packages` LIKE 'request'")->num_rows() == 0) {
-            $this->session->set_flashdata("err_msg", "Delete request feature is not available. Please contact administrator.");
-            redirect($_SERVER['HTTP_REFERER']);
-            return;
-        }
-
         $user    = getuser();
         $firm_id = $this->session->firm;
         $year    = $this->session->year;
@@ -637,20 +632,10 @@ class Package extends CI_Controller
         }
 
         if (!empty($service_package)) {
-            if (!isset($service_package['request'])) {
-                $service_package['request'] = 0;
-            }
-            if ($service_package['request'] == 0 || $service_package['request'] == 2) {
-                if ($this->db->update('service_packages', ['request' => 1], ['id' => $service_package['id']])) {
-                    $msg = $service_package['request'] == 2
-                        ? "Package Delete Request Resubmitted! Admin will review your request."
-                        : "Package Delete Request Saved! Admin will review your request.";
-                    $this->session->set_flashdata("msg", $msg);
-                } else {
-                    $this->session->set_flashdata("err_msg", "Failed to save delete request!");
-                }
+            if ($this->db->delete('service_packages', ['id' => $service_package['id']])) {
+                $this->session->set_flashdata("msg", "Package deleted successfully!");
             } else {
-                $this->session->set_flashdata("err_msg", "Delete Request already submitted!");
+                $this->session->set_flashdata("err_msg", "Failed to delete package!");
             }
         } else {
             $this->session->set_flashdata("err_msg", "Package not found!");
@@ -659,18 +644,11 @@ class Package extends CI_Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // REQUEST DELETE ACCOUNT WORK PACKAGE
+    // DELETE ACCOUNT WORK PACKAGE DIRECTLY
     // ─────────────────────────────────────────────────────────────────────────
 
     public function requestdeleteaccountwork()
     {
-        // Check column exists
-        if ($this->db->query("SHOW COLUMNS FROM `tf_customer_packages` LIKE 'request'")->num_rows() == 0) {
-            $this->session->set_flashdata("err_msg", "Delete request feature is not available. Please contact administrator.");
-            redirect($_SERVER['HTTP_REFERER']);
-            return;
-        }
-
         $user    = getuser();
         $firm_id = $this->session->firm;
         $year    = $this->session->year;
@@ -687,7 +665,7 @@ class Package extends CI_Controller
         if (!empty($existing_service_packages)) {
             $this->session->set_flashdata(
                 "err_msg",
-                "You already have a Service Package. Delete/resolve your Service Packages first, then you can request Account Work deletion."
+                "You already have a Service Package. Delete/resolve your Service Packages first, then you can delete Account Work package."
             );
             redirect($_SERVER['HTTP_REFERER']);
             return;
@@ -709,20 +687,10 @@ class Package extends CI_Controller
         }
 
         if (!empty($account_work_package)) {
-            if (!isset($account_work_package['request'])) {
-                $account_work_package['request'] = 0;
-            }
-            if ($account_work_package['request'] == 0 || $account_work_package['request'] == 2) {
-                if ($this->db->update('customer_packages', ['request' => 1], ['id' => $account_work_package['id']])) {
-                    $msg = $account_work_package['request'] == 2
-                        ? "Account Work Package Delete Request Resubmitted! Admin will review your request."
-                        : "Account Work Package Delete Request Saved! Admin will review your request.";
-                    $this->session->set_flashdata("msg", $msg);
-                } else {
-                    $this->session->set_flashdata("err_msg", "Failed to save delete request!");
-                }
+            if ($this->db->delete('customer_packages', ['id' => $account_work_package['id']])) {
+                $this->session->set_flashdata("msg", "Account Work Package deleted successfully!");
             } else {
-                $this->session->set_flashdata("err_msg", "Delete Request already submitted!");
+                $this->session->set_flashdata("err_msg", "Failed to delete Account Work package!");
             }
         } else {
             $this->session->set_flashdata("err_msg", "Account Work Package not found!");

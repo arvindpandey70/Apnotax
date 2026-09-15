@@ -252,68 +252,82 @@ class Services extends CI_Controller
             return;
         }
 
-        // ── Expired / unpaid service packages ───────────────────────────
-        // Show only packages whose expiry_date has passed AND payment_status = 0
-        // (i.e. auto-renewal failed due to insufficient wallet balance).
-        $expired_pkgs = array();
-        $all_user_pkgs = $this->customer->getservicepackage(
+        // ── Service packages ───────────────────────────
+        $all_service_pkgs = array();
+        $expired_pkgs     = array();
+        $all_user_pkgs    = $this->customer->getservicepackage(
             ['t1.user_id' => $user['id'], 't1.firm_id' => $firm_id],
             'all'
         );
         if (!empty($all_user_pkgs)) {
             foreach ($all_user_pkgs as $_pkg) {
-                $exp = !empty($_pkg['expiry_date']) ? strtotime($_pkg['expiry_date']) : 0;
+                $exp       = !empty($_pkg['expiry_date']) ? strtotime($_pkg['expiry_date']) : 0;
                 $is_unpaid = empty($_pkg['payment_status']) || $_pkg['payment_status'] == 0;
-                if ($exp && $exp <= time() && $is_unpaid) {
-                    // Resolve service names for display
-                    $svc_ids = array_filter(array_map('trim', explode(',', $_pkg['service_ids'] ?? '')));
-                    $svc_names = [];
-                    foreach ($svc_ids as $_sid) {
-                        $svc = $this->master->getservices(['id' => (int)$_sid], 'single');
-                        if (!empty($svc['name'])) {
-                            $svc_names[] = $svc['name'];
-                        }
+                $is_exp    = ($exp && $exp <= time() && $is_unpaid);
+
+                // Resolve service names for display
+                $svc_ids   = array_filter(array_map('trim', explode(',', $_pkg['service_ids'] ?? '')));
+                $svc_names = [];
+                foreach ($svc_ids as $_sid) {
+                    $svc = $this->master->getservices(['id' => (int)$_sid], 'single');
+                    if (!empty($svc['name'])) {
+                        $svc_names[] = $svc['name'];
                     }
-                    $_pkg['service_names'] = $svc_names;
-                    $_pkg['package_source'] = 'service_packages';
+                }
+                $_pkg['service_names']  = $svc_names;
+                $_pkg['package_source'] = 'service_packages';
+                $_pkg['is_expired']     = $is_exp ? 1 : 0;
+
+                $all_service_pkgs[] = $_pkg;
+                if ($is_exp) {
                     $expired_pkgs[] = $_pkg;
                 }
             }
         }
 
-        // ── Expired / unpaid Account Work packages ───────────────────────
-        // Show Account Work packages whose expiry_date has passed AND payment_status = 0
+        // ── Account Work packages ───────────────────────
+        $all_account_work     = array();
         $expired_account_work = array();
-        $account_work_pkgs = $this->db->get_where('customer_packages', [
+        $account_work_pkgs    = $this->db->get_where('customer_packages', [
             'user_id' => $user['id'],
             'firm_id' => $firm_id,
-            'status' => 1
+            'status'  => 1
         ])->result_array();
         
         if (!empty($account_work_pkgs)) {
             foreach ($account_work_pkgs as $_acpkg) {
-                $exp = !empty($_acpkg['expiry_date']) ? strtotime($_acpkg['expiry_date']) : 0;
+                $exp       = !empty($_acpkg['expiry_date']) ? strtotime($_acpkg['expiry_date']) : 0;
                 $is_unpaid = empty($_acpkg['payment_status']) || $_acpkg['payment_status'] == 0;
-                if ($exp && $exp <= time() && $is_unpaid) {
-                    // For Turnover type, use service rate (always show ₹5,000)
-                    if (empty($_acpkg['bill_amount']) || $_acpkg['bill_amount'] == 0) {
-                        // Always use the base service rate from services table
-                        $account_work_service = $this->master->getservices(['id' => 1, 'status' => 1], 'single');
-                        $_acpkg['bill_amount'] = !empty($account_work_service['rate']) ? (float)$account_work_service['rate'] : 5000;
-                    }
-                    
-                    $package_id = $_acpkg['package_id'];
-                    $service_name = $package_id == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-                    $_acpkg['service_names'] = ['Account Work (' . $service_name . ')'];
-                    $_acpkg['package_source'] = 'customer_packages';
-                    $_acpkg['package_type'] = !empty($_acpkg['package_type']) ? $_acpkg['package_type'] : 'Turnover';
+                $is_exp    = ($exp && $exp <= time() && $is_unpaid);
+
+                // For Turnover type, use service rate
+                if (empty($_acpkg['bill_amount']) || $_acpkg['bill_amount'] == 0) {
+                    $account_work_service = $this->master->getservices(['id' => 1, 'status' => 1], 'single');
+                    $_acpkg['bill_amount'] = !empty($account_work_service['rate']) ? (float)$account_work_service['rate'] : 5000;
+                }
+                
+                $package_id    = $_acpkg['package_id'];
+                $service_name  = $package_id == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
+                $_acpkg['service_names']  = ['Account Work (' . $service_name . ')'];
+                $_acpkg['package_source'] = 'customer_packages';
+                $_acpkg['package_type']   = !empty($_acpkg['package_type']) ? $_acpkg['package_type'] : 'Turnover';
+                $_acpkg['is_expired']     = $is_exp ? 1 : 0;
+
+                $all_account_work[] = $_acpkg;
+                if ($is_exp) {
                     $expired_account_work[] = $_acpkg;
                 }
             }
         }
         
-        // Merge both types of expired packages
+        // Load wallet balance and credit limit for summary header
+        $this->load->model('Wallet_model', 'wallet');
+        $data['wallet_balance']   = $this->wallet->getwalletbalance($user['id']);
+        $data['credit_limit']     = $this->wallet->get_available_credit($user['id']);
+
+        // Merge both types of packages
         $data['expired_packages'] = array_merge($expired_pkgs, $expired_account_work);
+        $data['all_packages']     = array_merge($all_service_pkgs, $all_account_work);
 
         $this->template->load('services', 'pendingservices', $data);
     }
@@ -539,6 +553,223 @@ class Services extends CI_Controller
 
         // ── Handle Account Work packages ────────────────────────────────
         if ($is_account_work) {
+            // Check if this is a Monthly Account Work package (supports cascade renewal for prior months)
+            if ($pkg_type == 'Monthly') {
+                $sel_pdate = !empty($pkg['purchase_date']) ? $pkg['purchase_date'] : $today;
+                $sel_id    = (int)$pkg['id'];
+
+                // Fetch all active Monthly customer_packages for user/firm/year
+                $all_monthly_pkgs = $this->db->get_where('customer_packages', [
+                    'user_id'      => $user['id'],
+                    'firm_id'      => $firm_id,
+                    'year'         => $year,
+                    'package_type' => 'Monthly',
+                    'status'       => 1
+                ])->result_array();
+
+                // Filter for expired & unpaid packages up to the selected package (by purchase_date or id)
+                $pkgs_to_renew = [];
+                if (!empty($all_monthly_pkgs)) {
+                    foreach ($all_monthly_pkgs as $_p) {
+                        $exp = !empty($_p['expiry_date']) ? strtotime($_p['expiry_date']) : 0;
+                        $is_unpaid = empty($_p['payment_status']) || $_p['payment_status'] == 0;
+                        $_p_date = !empty($_p['purchase_date']) ? $_p['purchase_date'] : $today;
+                        $_p_id   = (int)$_p['id'];
+
+                        if ($exp && $exp <= time() && $is_unpaid) {
+                            if (strtotime($_p_date) < strtotime($sel_pdate) || (strtotime($_p_date) == strtotime($sel_pdate) && $_p_id <= $sel_id)) {
+                                $pkgs_to_renew[] = $_p;
+                            }
+                        }
+                    }
+                }
+
+                // Ensure current package is included
+                $ids_to_renew = array_column($pkgs_to_renew, 'id');
+                if (!in_array($pkg['id'], $ids_to_renew)) {
+                    $pkgs_to_renew[] = $pkg;
+                }
+
+                // Sort chronologically by purchase_date ASC
+                usort($pkgs_to_renew, function ($a, $b) {
+                    $da = !empty($a['purchase_date']) ? strtotime($a['purchase_date']) : 0;
+                    $db = !empty($b['purchase_date']) ? strtotime($b['purchase_date']) : 0;
+                    if ($da == $db) {
+                        return ((int)$a['id']) - ((int)$b['id']);
+                    }
+                    return $da - $db;
+                });
+
+                // Calculate total base amount and GST
+                $customer    = $this->customer->getcustomers(['t1.user_id' => $user['id']], 'single');
+                $gst_enabled = !empty($customer) && !empty($customer['gst_enabled']) && $customer['gst_enabled'] == 1;
+                $gst_rate    = $gst_enabled ? 18.0 : 0.0;
+
+                $total_subtotal = 0;
+                $month_labels   = [];
+                foreach ($pkgs_to_renew as $_p) {
+                    $m_rate = (float)($_p['bill_amount'] ?? 0);
+                    if ($m_rate <= 0 && !empty($_p['amount'])) {
+                        $m_rate = (float)$_p['amount'];
+                    }
+                    if ($m_rate <= 0) {
+                        $m_rate = 500;
+                    }
+                    $total_subtotal += $m_rate;
+
+                    $m_date = !empty($_p['purchase_date']) ? $_p['purchase_date'] : null;
+                    if ($m_date) {
+                        $month_labels[] = date('F Y', strtotime($m_date));
+                    }
+                }
+
+                $total_gst_amount = $gst_enabled ? round(($total_subtotal * $gst_rate) / 100, 2) : 0;
+                $total_required_amount = $total_subtotal + $total_gst_amount;
+
+                // Check wallet and credit limit
+                $wallet_balance = $this->wallet->getwalletbalance($user['id']);
+                $credit_balance = $this->wallet->get_available_credit($user['id']);
+
+                $is_credit_limit = false;
+                if ($wallet_balance >= $total_required_amount) {
+                    $is_credit_limit = false;
+                } elseif ($credit_balance >= $total_required_amount) {
+                    $is_credit_limit = true;
+                } else {
+                    $m_str = !empty($month_labels) ? ' (' . implode(', ', $month_labels) . ')' : '';
+                    echo json_encode([
+                        'status'   => false,
+                        'message'  => 'Insufficient funds for renewing ' . count($pkgs_to_renew) . ' month(s)' . $m_str . '. Wallet Balance: ₹' . number_format($wallet_balance, 2) . ', Credit Limit: ₹' . number_format($credit_balance, 2) . '. Required: ₹' . number_format($total_required_amount, 2) . '.',
+                        'redirect' => base_url('mywallet/')
+                    ]);
+                    return;
+                }
+
+                $insert_type = $is_credit_limit ? 'Credit limit' : 'Monthly';
+
+                // Process renewal for each month in order
+                $service_1 = $this->master->getservices(['id' => 1], 'single');
+                $debit_date = !empty($service_1['debit_date']) ? $service_1['debit_date'] : null;
+                $dd = $debit_date ? (int)date('d', strtotime($debit_date)) : 28;
+
+                foreach ($pkgs_to_renew as $_p) {
+                    $m_rate = (float)($_p['bill_amount'] ?? 0);
+                    if ($m_rate <= 0 && !empty($_p['amount'])) {
+                        $m_rate = (float)$_p['amount'];
+                    }
+                    if ($m_rate <= 0) $m_rate = 500;
+
+                    $m_gst_amount   = $gst_enabled ? round(($m_rate * $gst_rate) / 100, 2) : 0;
+                    $m_total_amount = $m_rate + $m_gst_amount;
+                    $m_date_str     = !empty($_p['purchase_date']) ? date('F Y', strtotime($_p['purchase_date'])) : 'Monthly';
+
+                    // 1. Insert purchase row
+                    $this->db->insert('purchases', [
+                        'date'        => $today,
+                        'year'        => $year,
+                        'type'        => $insert_type,
+                        'user_id'     => $user['id'],
+                        'service_id'  => 1,
+                        'firm_id'     => $firm_id,
+                        'service'     => 'Account Work Monthly (' . $m_date_str . ' Renewal)',
+                        'rate'        => $m_rate,
+                        'subtotal'    => $m_rate,
+                        'gst_amount'  => $m_gst_amount,
+                        'gst_enabled' => $gst_enabled ? 1 : 0,
+                        'amount'      => $m_total_amount,
+                        'status'      => 0,
+                        'added_on'    => $datetime,
+                        'updated_on'  => $datetime,
+                    ]);
+
+                    // 2. Update package expiry (next month debit date)
+                    $p_ts = !empty($_p['purchase_date']) ? strtotime($_p['purchase_date']) : strtotime($today);
+                    $next_month = strtotime('+1 month', $p_ts);
+                    $nm = (int)date('m', $next_month);
+                    $ny = (int)date('Y', $next_month);
+                    $new_expiry = sprintf('%04d-%02d-%02d', $ny, $nm, $dd);
+                    if (!checkdate($nm, $dd, $ny)) {
+                        $new_expiry = date('Y-m-t', $next_month);
+                    }
+
+                    $this->db->update('customer_packages', [
+                        'payment_status' => 0,
+                        'purchase_date'  => $today,
+                        'expiry_date'    => $new_expiry,
+                        'updated_on'     => $datetime,
+                    ], ['id' => $_p['id']]);
+
+                    // 3. Update accountancy other_fee
+                    $month_start = !empty($_p['purchase_date']) ? date('Y-m-01', strtotime($_p['purchase_date'])) : date('Y-m-01');
+                    $acc_record  = $this->db->get_where('accountancy', [
+                        'user_id' => $user['id'],
+                        'firm_id' => $firm_id,
+                        'date'    => $month_start
+                    ])->unbuffered_row('array');
+
+                    if (!empty($acc_record)) {
+                        $existing_other_fee = (float)($acc_record['other_fee'] ?? 0);
+                        $new_other_fee = $existing_other_fee + $m_rate;
+                        $this->db->update('accountancy', [
+                            'other_fee'  => $new_other_fee,
+                            'updated_on' => $datetime
+                        ], ['id' => $acc_record['id']]);
+                    } else {
+                        $acc_data = [
+                            'user_id'    => $user['id'],
+                            'firm_id'    => $firm_id,
+                            'year'       => $year,
+                            'date'       => $month_start,
+                            'turnover'   => 0,
+                            'other_fee'  => $m_rate,
+                            'due_date'   => date('Y-m-d', strtotime('+1 month', strtotime($month_start))),
+                            'added_by'   => $user['id'],
+                            'status'     => 1,
+                            'added_on'   => $datetime,
+                            'updated_on' => $datetime
+                        ];
+                        $this->service->saveturnover($acc_data);
+                    }
+                }
+
+                // Generate combined invoice
+                $firm_info = $this->customer->getfirms(['t1.id' => $firm_id], 'single');
+                $inv_no = '';
+                try {
+                    $inv_result = $this->invoice->create_custom_invoice([
+                        'user_id'        => $user['id'],
+                        'firm_id'        => $firm_id,
+                        'year'           => $year,
+                        'invoice_date'   => $today,
+                        'billing_name'   => !empty($customer['name'])   ? $customer['name']   : $user['name'],
+                        'billing_email'  => !empty($customer['email'])  ? $customer['email']  : '',
+                        'billing_mobile' => !empty($customer['mobile']) ? $customer['mobile'] : '',
+                        'firm_name'      => !empty($firm_info['name'])  ? $firm_info['name']  : '',
+                        'firm_gstin'     => !empty($firm_info['gstin']) ? $firm_info['gstin'] : '',
+                        'firm_pan'       => !empty($firm_info['pan'])   ? $firm_info['pan']   : '',
+                        'service_name'   => 'Account Work Monthly Renewal (' . implode(', ', $month_labels) . ')',
+                        'type'           => 'Monthly',
+                        'period_value'   => $year,
+                        'subtotal'       => round($total_subtotal, 2),
+                        'gst_rate'       => $gst_rate,
+                        'gst_amount'     => round($total_gst_amount, 2),
+                        'total_amount'   => $total_required_amount,
+                    ]);
+                    if (!empty($inv_result['status']) && $inv_result['status'] === true) {
+                        $inv_no = $inv_result['invoice']['invoice_no'];
+                    }
+                } catch (Exception $e) {
+                    log_message('error', 'Renewal invoice error: ' . $e->getMessage());
+                }
+
+                $m_desc = !empty($month_labels) ? implode(', ', $month_labels) : count($pkgs_to_renew) . ' month(s)';
+                $msg = 'Renewal successful for ' . count($pkgs_to_renew) . ' month(s) [' . $m_desc . '] totaling ₹' . number_format($total_required_amount, 2) . '!';
+                if ($inv_no) $msg .= ' Invoice: ' . $inv_no;
+
+                echo json_encode(['status' => true, 'message' => $msg]);
+                return;
+            }
+
             // For Turnover type, recalculate bill_amount if needed
             if ($pkg_type == 'Turnover' && (empty($pkg['bill_amount']) || $pkg['bill_amount'] == 0)) {
                 $dates = getfiscaldates(date('Y-m-d', strtotime($pkg['purchase_date'] ?? $pkg['added_on'])));

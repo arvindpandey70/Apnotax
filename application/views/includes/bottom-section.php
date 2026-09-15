@@ -57,6 +57,9 @@
     <!-- Sticky js -->
     <script src="<?= file_url('includes/js/sticky.js'); ?>"></script>
 
+    <!-- SWEETALERT2 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
     <!-- CUSTOM JS -->
     <script src="<?= file_url('includes/js/custom.js'); ?>"></script>
     <script src="<?= file_url('includes/js/myscript.js'); ?>"></script>

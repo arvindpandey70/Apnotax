@@ -919,8 +919,8 @@ if (!empty($service_packages)) {
                         <div>
                             <?php if (empty($service_packages)) : ?>
                                 <form method="post" action="<?= base_url('package/requestdeleteaccountwork') ?>"
-                                    style="display:inline"
-                                    onsubmit="return confirm('Are you sure you want to delete this Account Work package? This action cannot be undone.')">
+                                    class="delete-pkg-form"
+                                    style="display:inline">
                                     <input type="hidden" name="package_id" value="<?= $package['id'] ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="fe fe-trash-2 me-1"></i>Delete Package
@@ -1669,89 +1669,221 @@ if (!empty($service_packages)) {
                 recalcTotal();
             });
 
+            /* ── Intercept Package Delete Form ──────────────────────── */
+            $('body').on('submit', '.delete-pkg-form', function(e) {
+                var form = this;
+                if ($(form).data('confirmed')) {
+                    return true;
+                }
+                e.preventDefault();
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Delete Package?',
+                        text: 'Are you sure you want to delete this package? This action cannot be undone.',
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: '<i class="fe fe-trash-2 me-1"></i> Yes, Delete',
+                        cancelButtonText: 'Cancel',
+                        customClass: {
+                            popup: 'rounded-4 shadow-lg border-0',
+                            confirmButton: 'btn btn-danger px-4 rounded-pill me-2',
+                            cancelButton: 'btn btn-light px-4 rounded-pill border'
+                        },
+                        buttonsStyling: false
+                    }).then(function(result) {
+                        if (result.isConfirmed) {
+                            $(form).data('confirmed', true);
+                            form.submit();
+                        }
+                    });
+                } else {
+                    if (confirm('Are you sure you want to delete this package?')) {
+                        $(form).data('confirmed', true);
+                        form.submit();
+                    }
+                }
+            });
+
             /* ── Account Work Renewal button AJAX ──────────────────────── */
             $('body').on('click', '.renew-acct-work-btn', function() {
                 var btn = $(this);
                 var pkgId = btn.data('pkg-id');
-                var amount = parseFloat(btn.data('amount'));
+                var amount = parseFloat(btn.data('amount')) || 0;
                 var amtFmt = amount.toLocaleString('en-IN', {
                     minimumFractionDigits: 2
                 });
 
-                if (!confirm('Renew Account Work package for ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
-                    return false;
-                }
+                function executeAcctRenewal() {
+                    btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
 
-                btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
-
-                $.ajax({
-                    type: 'POST',
-                    url: '<?= base_url('services/renewpackage') ?>',
-                    data: {
-                        package_id: pkgId
-                    },
-                    dataType: 'json',
-                    success: function(r) {
-                        if (r.status) {
-                            alertify.success(r.message || 'Renewal successful!');
-                            setTimeout(function() {
-                                location.reload();
-                            }, 1800);
-                        } else {
-                            alertify.error(r.message || 'Renewal failed.');
-                            if (r.redirect) setTimeout(function() {
-                                location.href = r.redirect;
-                            }, 2500);
+                    $.ajax({
+                        type: 'POST',
+                        url: '<?= base_url('services/renewpackage') ?>',
+                        data: { package_id: pkgId },
+                        dataType: 'json',
+                        success: function(r) {
+                            if (r.status) {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Renewal Successful!',
+                                        text: r.message || 'Renewal successful!',
+                                        icon: 'success',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-success px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        location.reload();
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.success(r.message || 'Renewal successful!');
+                                    setTimeout(function() { location.reload(); }, 1500);
+                                }
+                            } else {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Renewal Failed',
+                                        text: r.message || 'Renewal failed.',
+                                        icon: 'error',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-danger px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        if (r.redirect) location.href = r.redirect;
+                                        else btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.error(r.message || 'Renewal failed.');
+                                    if (r.redirect) setTimeout(function() { location.href = r.redirect; }, 2000);
+                                    btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
+                                }
+                            }
+                        },
+                        error: function() {
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({ title: 'Error', text: 'An error occurred. Please try again.', icon: 'error', confirmButtonText: 'OK' });
+                            } else if (typeof alertify !== 'undefined') {
+                                alertify.error('An error occurred. Please try again.');
+                            }
                             btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
                         }
-                    },
-                    error: function() {
-                        alertify.error('An error occurred. Please try again.');
-                        btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Renew & Pay');
+                    });
+                }
+
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Confirm Renewal',
+                        html: '<div class="text-center py-2"><p class="text-secondary mb-2">Renew Account Work package</p><h3 class="fw-bold text-danger mb-2">₹' + amtFmt + '</h3><p class="text-muted small mb-0">Amount will be deducted from your wallet balance.</p></div>',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: '<i class="fe fe-check-circle me-1"></i> Renew & Pay Now',
+                        cancelButtonText: 'Cancel',
+                        customClass: {
+                            popup: 'rounded-4 shadow-lg border-0',
+                            confirmButton: 'btn btn-danger btn-lg px-4 rounded-pill me-2',
+                            cancelButton: 'btn btn-light btn-lg px-4 rounded-pill border'
+                        },
+                        buttonsStyling: false
+                    }).then(function(result) {
+                        if (result.isConfirmed) {
+                            executeAcctRenewal();
+                        }
+                    });
+                } else {
+                    if (confirm('Renew Account Work package for ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
+                        executeAcctRenewal();
                     }
-                });
+                }
             });
 
             /* ── Pay Bill button AJAX ──────────────────────── */
             $('body').on('click', '.pay-bill-btn', function() {
-                var pkgId = $(this).data('pkg-id');
-                var amount = parseFloat($(this).data('amount'));
+                var $btn = $(this);
+                var pkgId = $btn.data('pkg-id');
+                var amount = parseFloat($btn.data('amount')) || 0;
                 var amtFmt = amount.toLocaleString('en-IN', {
                     minimumFractionDigits: 2
                 });
 
-                if (!confirm('Pay package bill of ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
-                    return false;
-                }
-                var $btn = $(this).prop('disabled', true)
-                    .html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
+                function executeBillPay() {
+                    $btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span>Processing…');
 
-                $.ajax({
-                    type: 'POST',
-                    url: '<?= base_url('package/paybill') ?>',
-                    data: {
-                        package_id: pkgId
-                    },
-                    dataType: 'json',
-                    success: function(r) {
-                        if (r.status) {
-                            alertify.success(r.message || 'Payment successful!');
-                            setTimeout(function() {
-                                location.reload();
-                            }, 1800);
-                        } else {
-                            alertify.error(r.message || 'Payment failed.');
-                            if (r.redirect) setTimeout(function() {
-                                location.href = r.redirect;
-                            }, 2500);
+                    $.ajax({
+                        type: 'POST',
+                        url: '<?= base_url('package/paybill') ?>',
+                        data: { package_id: pkgId },
+                        dataType: 'json',
+                        success: function(r) {
+                            if (r.status) {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Payment Successful!',
+                                        text: r.message || 'Payment successful!',
+                                        icon: 'success',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-success px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        location.reload();
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.success(r.message || 'Payment successful!');
+                                    setTimeout(function() { location.reload(); }, 1500);
+                                }
+                            } else {
+                                if (typeof Swal !== 'undefined') {
+                                    Swal.fire({
+                                        title: 'Payment Failed',
+                                        text: r.message || 'Payment failed.',
+                                        icon: 'error',
+                                        confirmButtonText: 'OK',
+                                        customClass: { confirmButton: 'btn btn-danger px-4 rounded-pill' },
+                                        buttonsStyling: false
+                                    }).then(function() {
+                                        if (r.redirect) location.href = r.redirect;
+                                        else $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
+                                    });
+                                } else {
+                                    if (typeof alertify !== 'undefined') alertify.error(r.message || 'Payment failed.');
+                                    if (r.redirect) setTimeout(function() { location.href = r.redirect; }, 2000);
+                                    $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
+                                }
+                            }
+                        },
+                        error: function() {
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({ title: 'Error', text: 'An error occurred. Please try again.', icon: 'error', confirmButtonText: 'OK' });
+                            } else if (typeof alertify !== 'undefined') {
+                                alertify.error('An error occurred. Please try again.');
+                            }
                             $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
                         }
-                    },
-                    error: function() {
-                        alertify.error('An error occurred. Please try again.');
-                        $btn.prop('disabled', false).html('<i class="fe fe-credit-card me-1"></i>Pay Now');
+                    });
+                }
+
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: 'Confirm Payment',
+                        html: '<div class="text-center py-2"><p class="text-secondary mb-2">Pay package bill</p><h3 class="fw-bold text-danger mb-2">₹' + amtFmt + '</h3><p class="text-muted small mb-0">Amount will be deducted from your wallet balance.</p></div>',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: '<i class="fe fe-check-circle me-1"></i> Pay Now',
+                        cancelButtonText: 'Cancel',
+                        customClass: {
+                            popup: 'rounded-4 shadow-lg border-0',
+                            confirmButton: 'btn btn-danger btn-lg px-4 rounded-pill me-2',
+                            cancelButton: 'btn btn-light btn-lg px-4 rounded-pill border'
+                        },
+                        buttonsStyling: false
+                    }).then(function(result) {
+                        if (result.isConfirmed) {
+                            executeBillPay();
+                        }
+                    });
+                } else {
+                    if (confirm('Pay package bill of ₹' + amtFmt + '?\n\nThis amount will be deducted from your wallet.')) {
+                        executeBillPay();
                     }
-                });
+                }
             });
 
 

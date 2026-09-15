@@ -182,19 +182,14 @@ function payment_state($pkg)
                                                 Pay Now
                                             </button>
                                         <?php else : ?>
-                                            <?php $req = isset($pkg['request']) ? (int)$pkg['request'] : 0; ?>
-                                            <?php if ($req == 1) : ?>
-                                                <span class="badge bg-warning text-dark py-1">Pending Delete</span>
-                                            <?php else : ?>
                                                 <form method="post" action="<?= base_url('package/requestdelete') ?>"
                                                     style="display:inline"
-                                                    onsubmit="return confirm('Request admin to delete this package?')">
+                                                    onsubmit="return confirm('Are you sure you want to delete this package?')">
                                                     <input type="hidden" name="package_id" value="<?= $pkg['id'] ?>">
                                                     <button type="submit" class="btn btn-outline-danger btn-sm">
                                                         <i class="fe fe-trash-2"></i> Delete
                                                     </button>
                                                 </form>
-                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -236,19 +231,14 @@ function payment_state($pkg)
                                                 Pay Now
                                             </button>
                                         <?php else : ?>
-                                            <?php $req = isset($pkg['request']) ? (int)$pkg['request'] : 0; ?>
-                                            <?php if ($req == 1) : ?>
-                                                <span class="badge bg-warning text-dark py-1">Pending Delete</span>
-                                            <?php else : ?>
                                                 <form method="post" action="<?= base_url('package/requestdelete') ?>"
                                                     style="display:inline"
-                                                    onsubmit="return confirm('Request admin to delete this package?')">
+                                                    onsubmit="return confirm('Are you sure you want to delete this package?')">
                                                     <input type="hidden" name="package_id" value="<?= $pkg['id'] ?>">
                                                     <button type="submit" class="btn btn-outline-danger btn-sm">
                                                         <i class="fe fe-trash-2"></i> Delete
                                                     </button>
                                                 </form>
-                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </td>
                                 </tr>

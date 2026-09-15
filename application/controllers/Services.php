@@ -584,17 +584,25 @@ class Services extends CI_Controller
             $gst_amount = $gst_enabled ? round(($bill * $gst_rate) / 100, 2) : 0; // 18% of base rate (e.g., 1260)
             $total_amount = $subtotal + $gst_amount; // Total = base + GST (e.g., 8260)
 
-            // Check wallet balance against total amount (including GST)
-            $balance = $this->wallet->getwalletbalance($user['id']);
-            if ($balance < $total_amount) {
-                $needed = $total_amount - $balance;
+            // Check wallet balance first, fall back to credit limit if wallet balance is insufficient
+            $wallet_balance = $this->wallet->getwalletbalance($user['id']);
+            $credit_balance = $this->wallet->get_available_credit($user['id']);
+
+            $is_credit_limit = false;
+            if ($wallet_balance >= $total_amount) {
+                $is_credit_limit = false;
+            } elseif ($credit_balance >= $total_amount) {
+                $is_credit_limit = true;
+            } else {
                 echo json_encode([
                     'status'   => false,
-                    'message'  => 'Insufficient wallet balance. Please add ₹' . number_format($needed, 2) . ' to your wallet first.',
+                    'message'  => 'Insufficient funds. Wallet Balance: ₹' . number_format($wallet_balance, 2) . ', Credit Limit: ₹' . number_format($credit_balance, 2) . '. Required: ₹' . number_format($total_amount, 2) . '.',
                     'redirect' => base_url('mywallet/')
                 ]);
                 return;
             }
+
+            $insert_type = $is_credit_limit ? 'Credit limit' : $pkg_type;
 
             // For Monthly type, package_id is NULL/0, use generic name
             // For Turnover type, use package name
@@ -610,7 +618,7 @@ class Services extends CI_Controller
             $this->db->insert('purchases', [
                 'date'       => $today,
                 'year'       => $year,
-                'type'       => $pkg_type,
+                'type'       => $insert_type,
                 'user_id'    => $user['id'],
                 'service_id' => 1, // Account Work
                 'firm_id'    => $firm_id,
@@ -669,7 +677,27 @@ class Services extends CI_Controller
                 $total_gst = round(($bill * 18) / 100, 2);
             }
 
-            // ── Create a purchase row per service (deducts from wallet) ────
+            $total_pkg_amount = $bill + $total_gst;
+            $wallet_balance   = $this->wallet->getwalletbalance($user['id']);
+            $credit_balance   = $this->wallet->get_available_credit($user['id']);
+
+            $is_credit_limit = false;
+            if ($wallet_balance >= $total_pkg_amount) {
+                $is_credit_limit = false;
+            } elseif ($credit_balance >= $total_pkg_amount) {
+                $is_credit_limit = true;
+            } else {
+                echo json_encode([
+                    'status'   => false,
+                    'message'  => 'Insufficient funds. Wallet Balance: ₹' . number_format($wallet_balance, 2) . ', Credit Limit: ₹' . number_format($credit_balance, 2) . '. Required: ₹' . number_format($total_pkg_amount, 2) . '.',
+                    'redirect' => base_url('mywallet/')
+                ]);
+                return;
+            }
+
+            $insert_type = $is_credit_limit ? 'Credit limit' : $pkg_type;
+
+            // ── Create a purchase row per service (deducts from wallet or credit limit) ────
             foreach ($services as $svc) {
                 $rate = $service_rates[$svc['id']];
                 $subtotal = $rate;
@@ -685,7 +713,7 @@ class Services extends CI_Controller
                 $this->db->insert('purchases', [
                     'date'       => $today,
                     'year'       => $year,
-                    'type'       => $pkg_type,
+                    'type'       => $insert_type,
                     'user_id'    => $user['id'],
                     'service_id' => $svc['id'],
                     'firm_id'    => $firm_id,

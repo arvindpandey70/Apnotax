@@ -897,22 +897,41 @@ if (!empty($service_packages)) {
             <!-- ── Already selected ── -->
             <div class="acct-status-row" style="border-left-color: <?= $is_expired && $is_unpaid ? '#dc3545' : '#28a745' ?>;">
                 <div class="acct-status-body">
-                    <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-                        <span class="pkg-type-pill" style="background:#eaf7ee;color:#28a745;border:1px solid #28a74540">
-                            <i class="fe fe-briefcase me-1" style="font-size:.68rem"></i>
-                            <?= htmlspecialchars($acct_name) ?>
-                        </span>
-                        <span class="state-pill <?= $status_class ?>">
-                            <i class="fe <?= $status_icon ?>"></i> <?= $status_label ?>
-                        </span>
-                        <span class="pkg-type-pill" style="background:#f0f9f1;color:#3a7d44;border:1px solid #b7e0be">
-                            <i class="fe fe-trending-up me-1" style="font-size:.68rem"></i><?= htmlspecialchars($pkg_type) ?>
-                        </span>
-                        <?php if ($pkg_type == 'Monthly' && !empty($package['amount'])) : ?>
-                            <span class="pkg-type-pill" style="background:#e3f2fd;color:#1976d2;border:1px solid #90caf9">
-                                <i class="fe fe-rupee me-1" style="font-size:.68rem"></i>₹<?= number_format($package['amount'], 2) ?>/month
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                        <div class="d-flex align-items-center flex-wrap gap-2">
+                            <span class="pkg-type-pill" style="background:#eaf7ee;color:#28a745;border:1px solid #28a74540">
+                                <i class="fe fe-briefcase me-1" style="font-size:.68rem"></i>
+                                <?= htmlspecialchars($acct_name) ?>
                             </span>
-                        <?php endif; ?>
+                            <span class="state-pill <?= $status_class ?>">
+                                <i class="fe <?= $status_icon ?>"></i> <?= $status_label ?>
+                            </span>
+                            <span class="pkg-type-pill" style="background:#f0f9f1;color:#3a7d44;border:1px solid #b7e0be">
+                                <i class="fe fe-trending-up me-1" style="font-size:.68rem"></i><?= htmlspecialchars($pkg_type) ?>
+                            </span>
+                            <?php if ($pkg_type == 'Monthly' && !empty($package['amount'])) : ?>
+                                <span class="pkg-type-pill" style="background:#e3f2fd;color:#1976d2;border:1px solid #90caf9">
+                                    <i class="fe fe-rupee me-1" style="font-size:.68rem"></i>₹<?= number_format($package['amount'], 2) ?>/month
+                                </span>
+                            <?php endif; ?>
+                        </div>
+
+                        <div>
+                            <?php if (empty($service_packages)) : ?>
+                                <form method="post" action="<?= base_url('package/requestdeleteaccountwork') ?>"
+                                    style="display:inline"
+                                    onsubmit="return confirm('Are you sure you want to delete this Account Work package? This action cannot be undone.')">
+                                    <input type="hidden" name="package_id" value="<?= $package['id'] ?>">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                                        <i class="fe fe-trash-2 me-1"></i>Delete Package
+                                    </button>
+                                </form>
+                            <?php else : ?>
+                                <span class="badge bg-secondary text-white px-2 py-1" style="font-size:.75rem;">
+                                    <i class="fe fe-info me-1"></i>Delete Service Packages first
+                                </span>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     <div class="d-flex flex-wrap gap-3" style="font-size:.82rem;color:#555;">
                         <?php if ($pkg_type == 'Monthly') : ?>
@@ -962,41 +981,6 @@ if (!empty($service_packages)) {
                             </div>
                         </div>
                     <?php endif; ?>
-                    
-                    <!-- Delete Request Section -->
-                    <div class="mt-3 p-3 bg-light border-top">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <div>
-                                <small class="text-muted" style="font-size:.8rem;">
-                                    <i class="fe fe-info me-1"></i>Need to delete this package?
-                                </small>
-                            </div>
-                            <?php 
-                            $request_status = isset($package['request']) ? (int)$package['request'] : 0;
-                            ?>
-                            <?php if ($request_status == 0 || $request_status == 2) : ?>
-                                <?php if (empty($service_packages)) : ?>
-                                    <form method="post" action="<?= base_url('package/requestdeleteaccountwork') ?>"
-                                        style="display:inline"
-                                        onsubmit="return confirm('Request admin to delete this Account Work package? This action cannot be undone.')">
-                                        <input type="hidden" name="package_id" value="<?= $package['id'] ?>">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                                            <i class="fe fe-trash-2 me-1"></i>Request Delete
-                                        </button>
-                                    </form>
-                                <?php else : ?>
-                                    <span class="badge bg-secondary text-white px-3 py-2">
-                                        <i class="fe fe-info me-1"></i>
-                                        Delete Service Packages first to request Account Work deletion
-                                    </span>
-                                <?php endif; ?>
-                            <?php elseif ($request_status == 1) : ?>
-                                <span class="badge bg-warning text-dark px-3 py-2">
-                                    <i class="fe fe-clock me-1"></i>Delete request pending
-                                </span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
                 </div>
                 <div class="acct-status-icon">
                     <i class="fe fe-briefcase"></i>

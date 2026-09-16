@@ -169,7 +169,7 @@ class Package extends CI_Controller
         $data['purchased_service_ids'] = array();
         if (!empty($user['id']) && !empty($firm_id) && !empty($year)) {
             $direct_purchases = $this->service->getpurchases(
-                "t1.user_id='{$user['id']}' AND t1.firm_id='{$firm_id}' AND t1.year='{$year}' AND t1.service_id != 1"
+                "t1.user_id='{$user['id']}' AND t1.firm_id='{$firm_id}' AND t1.year='{$year}' AND t1.service_id != 1 AND t1.service NOT LIKE '%Package%' AND t1.service NOT LIKE '%Auto-Debit%'"
             );
             if (!empty($direct_purchases)) {
                 foreach ($direct_purchases as $dp) {
@@ -410,12 +410,14 @@ class Package extends CI_Controller
             return;
         }
 
-        // No invoice at purchase time — invoice is only generated when the
-        // package expires and gets renewed (auto or manual).
+        // Immediately attempt auto-debit for any past/due periods using Wallet / Credit Limit
+        $this->load->library('auto_debit_service');
+        $this->auto_debit_service->process_user_pending_auto_debits($user['id']);
+
         $this->session->set_flashdata(
             'msg',
             $result['message'] . ' | ₹' . number_format($total, 2) .
-                ' will be billed when the package expires on ' .
+                ' billed for package ending on ' .
                 date('d-m-Y', strtotime($expiry_date)) . '.'
         );
 
@@ -618,29 +620,39 @@ class Package extends CI_Controller
         $firm_id = $this->session->firm;
         $year    = $this->session->year;
 
-        // Support deleting a specific package_id via POST, or fall back to first for firm/year
         $package_id = (int)$this->input->post('package_id');
 
         if ($package_id > 0) {
-            $service_package = $this->db->get_where(
-                'service_packages',
-                ['id' => $package_id, 'user_id' => $user['id']]
-            )->unbuffered_row('array');
-        } else {
-            $where = array('t1.user_id' => $user['id'], 't1.firm_id' => $firm_id, 't1.year' => $year);
-            $service_package = $this->customer->getservicepackage($where, 'single');
+            $spkg = $this->db->get_where('service_packages', ['id' => $package_id, 'user_id' => $user['id']])->unbuffered_row('array');
+            if (!empty($spkg)) {
+                $firm_id  = $spkg['firm_id'];
+                $year     = $spkg['year'];
+                $pkg_type = $spkg['package_type'] ?? '';
+                
+                $del_where = ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year];
+                if (!empty($pkg_type)) {
+                    $del_where['package_type'] = $pkg_type;
+                }
+                $this->db->delete('service_packages', $del_where);
+                // Also clean up associated purchases for service packages
+                $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id !=' => 1]);
+
+                $this->session->set_flashdata("msg", "Package deleted successfully!");
+                redirect($_SERVER['HTTP_REFERER'] ?? 'package/');
+                return;
+            }
         }
 
-        if (!empty($service_package)) {
-            if ($this->db->delete('service_packages', ['id' => $service_package['id']])) {
-                $this->session->set_flashdata("msg", "Package deleted successfully!");
-            } else {
-                $this->session->set_flashdata("err_msg", "Failed to delete package!");
-            }
+        $del_count = $this->db->get_where('service_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year])->num_rows();
+        if ($del_count > 0) {
+            $this->db->delete('service_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
+            // Also clean up associated purchases for service packages
+            $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id !=' => 1]);
+            $this->session->set_flashdata("msg", "Package deleted successfully!");
         } else {
             $this->session->set_flashdata("err_msg", "Package not found!");
         }
-        redirect($_SERVER['HTTP_REFERER']);
+        redirect($_SERVER['HTTP_REFERER'] ?? 'package/');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -653,9 +665,6 @@ class Package extends CI_Controller
         $firm_id = $this->session->firm;
         $year    = $this->session->year;
 
-        // Sync behavior with website rule:
-        // Account Work can be deleted only if user has NO service packages
-        // for the same firm/year.
         $where_pkg = array(
             't1.user_id' => $user['id'],
             't1.firm_id' => $firm_id,
@@ -667,35 +676,21 @@ class Package extends CI_Controller
                 "err_msg",
                 "You already have a Service Package. Delete/resolve your Service Packages first, then you can delete Account Work package."
             );
-            redirect($_SERVER['HTTP_REFERER']);
+            redirect($_SERVER['HTTP_REFERER'] ?? 'package/');
             return;
         }
 
-        // Support deleting a specific package_id via POST, or fall back to first for firm/year
-        $package_id = (int)$this->input->post('package_id');
-
-        if ($package_id > 0) {
-            $account_work_package = $this->db->get_where(
-                'customer_packages',
-                ['id' => $package_id, 'user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'status' => 1]
-            )->unbuffered_row('array');
-        } else {
-            $account_work_package = $this->db->get_where(
-                'customer_packages',
-                ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'status' => 1]
-            )->unbuffered_row('array');
-        }
-
-        if (!empty($account_work_package)) {
-            if ($this->db->delete('customer_packages', ['id' => $account_work_package['id']])) {
-                $this->session->set_flashdata("msg", "Account Work Package deleted successfully!");
-            } else {
-                $this->session->set_flashdata("err_msg", "Failed to delete Account Work package!");
-            }
+        $del_count = $this->db->get_where('customer_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year])->num_rows();
+        $purchase_count = $this->db->get_where('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id' => 1])->num_rows();
+        if ($del_count > 0 || $purchase_count > 0) {
+            $this->db->delete('customer_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
+            // Also clean up associated Account Work purchases
+            $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id' => 1]);
+            $this->session->set_flashdata("msg", "Account Work Package deleted successfully!");
         } else {
             $this->session->set_flashdata("err_msg", "Account Work Package not found!");
         }
-        redirect($_SERVER['HTTP_REFERER']);
+        redirect($_SERVER['HTTP_REFERER'] ?? 'package/');
     }
 
     // ─────────────────────────────────────────────────────────────────────────

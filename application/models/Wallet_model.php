@@ -29,6 +29,12 @@ class Wallet_model extends CI_Model{
         $data['updated_on']=$datetime;
         if($this->db->get_where('wallet',$where2)->num_rows()!=0){
             if($this->db->update("wallet",$data,$where)){
+                // Fetch user_id to trigger pending auto-debits collection
+                $wrow = $this->db->get_where('wallet', $where)->unbuffered_row('array');
+                if (!empty($wrow['user_id'])) {
+                    $this->load->library('auto_debit_service');
+                    $this->auto_debit_service->process_user_pending_auto_debits($wrow['user_id']);
+                }
                 return array("status"=>true,"message"=>"Payment Successful! Wallet Amount Updated!");
             }
             else{
@@ -172,6 +178,10 @@ class Wallet_model extends CI_Model{
         $data['status']=1; // Directly approved for admin recharge
         $data['added_on']=$data['updated_on']=$datetime;
         if($this->db->insert("wallet",$data)){
+            if (!empty($data['user_id'])) {
+                $this->load->library('auto_debit_service');
+                $this->auto_debit_service->process_user_pending_auto_debits($data['user_id']);
+            }
             return array("status"=>true,"message"=>"Wallet Recharged Successfully!");
         }
         else{

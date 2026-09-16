@@ -262,8 +262,8 @@ class Services extends CI_Controller
         if (!empty($all_user_pkgs)) {
             foreach ($all_user_pkgs as $_pkg) {
                 $exp       = !empty($_pkg['expiry_date']) ? strtotime($_pkg['expiry_date']) : 0;
-                $is_unpaid = empty($_pkg['payment_status']) || $_pkg['payment_status'] == 0;
-                $is_exp    = ($exp && $exp <= time() && $is_unpaid);
+                $is_unpaid = empty($_pkg['payment_status']) || $_pkg['payment_status'] == 0 || ($_pkg['auto_debit_status'] ?? '') === 'Pending';
+                $is_exp    = $is_unpaid;
 
                 // Resolve service names for display
                 $svc_ids   = array_filter(array_map('trim', explode(',', $_pkg['service_ids'] ?? '')));
@@ -297,8 +297,8 @@ class Services extends CI_Controller
         if (!empty($account_work_pkgs)) {
             foreach ($account_work_pkgs as $_acpkg) {
                 $exp       = !empty($_acpkg['expiry_date']) ? strtotime($_acpkg['expiry_date']) : 0;
-                $is_unpaid = empty($_acpkg['payment_status']) || $_acpkg['payment_status'] == 0;
-                $is_exp    = ($exp && $exp <= time() && $is_unpaid);
+                $is_unpaid = empty($_acpkg['payment_status']) || $_acpkg['payment_status'] == 0 || ($_acpkg['auto_debit_status'] ?? '') === 'Pending';
+                $is_exp    = $is_unpaid;
 
                 // For Turnover type, use service rate
                 if (empty($_acpkg['bill_amount']) || $_acpkg['bill_amount'] == 0) {
@@ -320,14 +320,31 @@ class Services extends CI_Controller
             }
         }
         
+        // Helper inline closure for deduplicating package records by expiry date
+        $_dedupe = function($pkgs) {
+            if (empty($pkgs)) return [];
+            $grouped = [];
+            foreach ($pkgs as $p) {
+                $key = ($p['package_type'] ?? '') . '_' . ($p['expiry_date'] ?? '');
+                if (!isset($grouped[$key])) {
+                    $grouped[$key] = $p;
+                } else {
+                    if (empty($grouped[$key]['payment_status']) && !empty($p['payment_status'])) {
+                        $grouped[$key] = $p;
+                    }
+                }
+            }
+            return array_values($grouped);
+        };
+
         // Load wallet balance and credit limit for summary header
         $this->load->model('Wallet_model', 'wallet');
         $data['wallet_balance']   = $this->wallet->getwalletbalance($user['id']);
         $data['credit_limit']     = $this->wallet->get_available_credit($user['id']);
 
         // Merge both types of packages
-        $data['expired_packages'] = array_merge($expired_pkgs, $expired_account_work);
-        $data['all_packages']     = array_merge($all_service_pkgs, $all_account_work);
+        $data['expired_packages'] = $_dedupe(array_merge($expired_pkgs, $expired_account_work));
+        $data['all_packages']     = $_dedupe(array_merge($all_service_pkgs, $all_account_work));
 
         $this->template->load('services', 'pendingservices', $data);
     }
@@ -1933,9 +1950,15 @@ class Services extends CI_Controller
                                 }
                                 // --------------------------------------------
                                 
+                                // Immediately process pending auto debits using Wallet / Credit Limit
+                                $this->load->library('auto_debit_service');
+                                $this->auto_debit_service->process_user_pending_auto_debits($user['id']);
+
                                 $this->session->set_flashdata("msg", "Account Work Monthly package selected successfully! Package expires on " . date('d-m-Y', strtotime($expiry_date)) . ". Amount ₹" . number_format($amount, 2) . " will be auto-debited monthly.");
                             } else {
                                 $name = $package_id == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
+                                $this->load->library('auto_debit_service');
+                                $this->auto_debit_service->process_user_pending_auto_debits($user['id']);
                                 $this->session->set_flashdata("msg", $name . " Selected Successfully! Package expires on " . date('d-m-Y', strtotime($expiry_date)) . ".");
                             }
                         } else {

@@ -31,7 +31,8 @@ if (isset($_SERVER['HTTP_HOST']) && preg_match('/^(localhost|127\.0\.0\.1)(:\d+)
     $config['base_url'] = 'http://' . $_SERVER['HTTP_HOST'] . ($script_path === '' || $script_path === '.' ? '/' : $script_path . '/');
 }
 else{
-    $config['base_url'] = "https://$_SERVER[HTTP_HOST]/";
+    $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
+    $config['base_url'] = "https://{$host}/";
 }
 
 /*

@@ -29,6 +29,12 @@ class Wallet_model extends CI_Model{
         $data['updated_on']=$datetime;
         if($this->db->get_where('wallet',$where2)->num_rows()!=0){
             if($this->db->update("wallet",$data,$where)){
+                // Fetch user_id to trigger pending auto-debits collection
+                $wrow = $this->db->get_where('wallet', $where)->unbuffered_row('array');
+                if (!empty($wrow['user_id'])) {
+                    $this->load->library('auto_debit_service');
+                    $this->auto_debit_service->process_user_pending_auto_debits($wrow['user_id']);
+                }
                 return array("status"=>true,"message"=>"Payment Successful! Wallet Amount Updated!");
             }
             else{
@@ -95,11 +101,35 @@ class Wallet_model extends CI_Model{
         return round($purchases_credit + $acc_credit, 2);
     }
 
+    public function get_credit_percent($user_id){
+        $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
+        if (!empty($customer) && isset($customer['credit_percent']) && $customer['credit_percent'] !== '' && $customer['credit_percent'] !== null) {
+            return (float)$customer['credit_percent'];
+        }
+        $global = $this->db->get_where('credit_limit_percentage', ['status' => 1])->unbuffered_row('array');
+        if (!empty($global) && isset($global['percent'])) {
+            return (float)$global['percent'];
+        }
+        return 0.00;
+    }
+
+    public function get_used_credit_tax($user_id){
+        $used_credit = $this->get_used_credit($user_id);
+        $percent = $this->get_credit_percent($user_id);
+        return round(($used_credit * $percent) / 100, 2);
+    }
+
+    public function get_total_used_credit_with_tax($user_id){
+        $used_credit = $this->get_used_credit($user_id);
+        $tax = $this->get_used_credit_tax($user_id);
+        return round($used_credit + $tax, 2);
+    }
+
     public function get_available_credit($user_id){
         $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
         $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-        $used_credit = $this->get_used_credit($user_id);
-        $available = $credit_limit - $used_credit;
+        $total_used_with_tax = $this->get_total_used_credit_with_tax($user_id);
+        $available = $credit_limit - $total_used_with_tax;
         return max(0.00, round($available, 2));
     }
     
@@ -172,6 +202,10 @@ class Wallet_model extends CI_Model{
         $data['status']=1; // Directly approved for admin recharge
         $data['added_on']=$data['updated_on']=$datetime;
         if($this->db->insert("wallet",$data)){
+            if (!empty($data['user_id'])) {
+                $this->load->library('auto_debit_service');
+                $this->auto_debit_service->process_user_pending_auto_debits($data['user_id']);
+            }
             return array("status"=>true,"message"=>"Wallet Recharged Successfully!");
         }
         else{

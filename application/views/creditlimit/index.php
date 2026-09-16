@@ -30,6 +30,18 @@
                         <span class="text-danger">₹ <?= number_format($used_credit, 2) ?></span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <strong>Percentage:</strong> 
+                        <span class="text-primary fw-bold"><?= !empty($credit_percent) ? htmlspecialchars($credit_percent) . '%' : '0%' ?></span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <strong>Tax Amount (<?= !empty($credit_percent) ? htmlspecialchars($credit_percent) . '%' : '0%' ?> of Used Credit):</strong> 
+                        <span class="text-danger">₹ <?= number_format($tax_amount, 2) ?></span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <strong>Total Used Credit (including Tax):</strong> 
+                        <span class="text-danger fw-bold">₹ <?= number_format($total_used_with_tax, 2) ?></span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
                         <strong>Available Limit:</strong> 
                         <span class="text-success fw-bold">₹ <?= number_format($available_limit, 2) ?></span>
                     </li>

@@ -101,7 +101,10 @@
                         </li>
                     <?php } ?>
                     <li class="slide">
-                         <a class="side-menu__item <?= activate_menu('creditlimit'); ?>" data-bs-toggle="slide" href="<?= base_url('creditlimit'); ?>"><i class="side-menu__icon fa fa-credit-card"></i><span class="side-menu__label">Credit Limit</span></a>
+                         <a class="side-menu__item <?= activate_menu(['creditlimit', 'creditlimit/index']); ?>" data-bs-toggle="slide" href="<?= base_url('creditlimit'); ?>"><i class="side-menu__icon fa fa-credit-card"></i><span class="side-menu__label">Credit Limit</span></a>
+                    </li>
+                    <li class="slide">
+                         <a class="side-menu__item <?= activate_menu('creditlimit/percentage'); ?>" data-bs-toggle="slide" href="<?= base_url('creditlimit/percentage'); ?>"><i class="side-menu__icon fa fa-percent"></i><span class="side-menu__label">Credit Limit Percentage</span></a>
                     </li>
                     <li class="slide">
                         <a class="side-menu__item <?= activate_menu('chat'); ?>" data-bs-toggle="slide" href="<?= base_url('chat/'); ?>"><i class="side-menu__icon fa fa-comments"></i><span class="side-menu__label">Chat</span></a>

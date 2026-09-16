@@ -91,21 +91,40 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
 
         <div class="row g-3">
             <?php
+            if (!function_exists('_get_pkg_month_ts')) {
+                function _get_pkg_month_ts($p) {
+                    $edate = !empty($p['expiry_date']) ? strtotime($p['expiry_date']) : 0;
+                    $pdate = !empty($p['purchase_date']) ? strtotime($p['purchase_date']) : 0;
+                    if ($edate > 0) {
+                        return strtotime('-1 month', $edate);
+                    }
+                    return $pdate;
+                }
+            }
+
+            if (!function_exists('_get_pkg_month_name')) {
+                function _get_pkg_month_name($p) {
+                    if (($p['package_type'] ?? '') !== 'Monthly') return null;
+                    $ts = _get_pkg_month_ts($p);
+                    return ($ts > 0) ? date('F Y', $ts) : null;
+                }
+            }
+
             // Extract and sort monthly pending packages chronologically for cumulative calculations
             $monthly_pkgs = array_filter($expired_packages, function($p) {
                 return ($p['package_type'] ?? '') === 'Monthly';
             });
             usort($monthly_pkgs, function($a, $b) {
-                $da = !empty($a['purchase_date']) ? strtotime($a['purchase_date']) : 0;
-                $db = !empty($b['purchase_date']) ? strtotime($b['purchase_date']) : 0;
+                $da = _get_pkg_month_ts($a);
+                $db = _get_pkg_month_ts($b);
                 if ($da == $db) return ((int)$a['id']) - ((int)$b['id']);
                 return $da - $db;
             });
 
-            // Sort all display packages chronologically by purchase_date ASC
+            // Sort all display packages chronologically by cycle date ASC
             usort($display_packages, function($a, $b) {
-                $da = !empty($a['purchase_date']) ? strtotime($a['purchase_date']) : 0;
-                $db = !empty($b['purchase_date']) ? strtotime($b['purchase_date']) : 0;
+                $da = _get_pkg_month_ts($a);
+                $db = _get_pkg_month_ts($b);
                 if ($da == $db) return ((int)$a['id']) - ((int)$b['id']);
                 return $da - $db;
             });
@@ -124,9 +143,12 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                 
                 $exp_date   = !empty($epkg['expiry_date']) ? date('d M Y', strtotime($epkg['expiry_date'])) : '—';
                 
+                $exp_ts = !empty($epkg['expiry_date']) ? strtotime($epkg['expiry_date']) : 0;
+                $is_past_renewed   = (!$is_expired && $exp_ts > 0 && $exp_ts <= time());
+                $is_current_active = (!$is_expired && ($exp_ts == 0 || $exp_ts > time()));
+
                 // Formatted Month name for Monthly packages
-                $purchase_date = !empty($epkg['purchase_date']) ? $epkg['purchase_date'] : null;
-                $month_name    = ($pkg_type === 'Monthly' && !empty($purchase_date)) ? date('F Y', strtotime($purchase_date)) : null;
+                $month_name = _get_pkg_month_name($epkg);
 
                 // Formatted Financial Year (e.g. 20262027 -> 2026-2027)
                 $fy_raw        = $epkg['year'] ?? '';
@@ -137,11 +159,11 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                 $cum_subtotal    = $bill;
                 $cum_month_names = [];
                 if ($is_expired && $pkg_type === 'Monthly' && !empty($monthly_pkgs)) {
-                    $sel_pdate = !empty($epkg['purchase_date']) ? strtotime($epkg['purchase_date']) : 0;
+                    $sel_pdate = _get_pkg_month_ts($epkg);
                     $sel_id    = (int)$epkg['id'];
                     
                     $incl_pkgs = array_filter($monthly_pkgs, function($mp) use ($sel_pdate, $sel_id) {
-                        $mp_date = !empty($mp['purchase_date']) ? strtotime($mp['purchase_date']) : 0;
+                        $mp_date = _get_pkg_month_ts($mp);
                         $mp_id   = (int)$mp['id'];
                         return ($mp_date < $sel_pdate || ($mp_date == $sel_pdate && $mp_id <= $sel_id));
                     });
@@ -159,8 +181,9 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                                 if ($ibill <= 0) $ibill = 500;
                             }
                             $cum_subtotal += $ibill;
-                            if (!empty($ipkg['purchase_date'])) {
-                                $cum_month_names[] = date('F Y', strtotime($ipkg['purchase_date']));
+                            $mname = _get_pkg_month_name($ipkg);
+                            if ($mname) {
+                                $cum_month_names[] = $mname;
                             }
                         }
                     }
@@ -189,8 +212,15 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                                     </span>
 
                                     <?php if ($is_expired) : ?>
+                                        <span class="badge bg-danger text-white px-2 py-1" style="font-size:.8rem;">
+                                            <i class="fe fe-alert-triangle me-1"></i>Auto-Debit Pending / Overdue
+                                        </span>
                                         <span class="badge bg-light text-danger border border-danger-subtle px-2 py-1" style="font-size:.8rem;">
-                                            <i class="fe fe-alert-circle me-1"></i>Expired: <?= $exp_date ?>
+                                            <i class="fe fe-clock me-1"></i>Due Date: <?= $exp_date ?>
+                                        </span>
+                                    <?php elseif ($is_past_renewed) : ?>
+                                        <span class="badge bg-success text-white px-2 py-1" style="font-size:.8rem;">
+                                            <i class="fe fe-check-circle me-1"></i>Renewed
                                         </span>
                                     <?php else : ?>
                                         <span class="badge bg-success text-white px-2 py-1" style="font-size:.8rem;">
@@ -225,8 +255,12 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                                         </span>
                                     </div>
                                 <?php elseif ($is_expired) : ?>
-                                    <p class="text-muted small mb-0 mt-1">
-                                        Click "Renew & Pay" to clear pending dues from your wallet.
+                                    <div class="mt-2 p-2 px-3 rounded-3 bg-danger-transparent text-danger border border-danger-subtle" style="font-size:.82rem;">
+                                        <i class="fe fe-alert-circle me-1"></i><strong>Auto-Debit Pending:</strong> Wallet / Credit balance was insufficient on <?= $exp_date ?>. Recharge wallet or click <strong>Renew & Pay</strong> to clear dues.
+                                    </div>
+                                <?php elseif ($is_past_renewed) : ?>
+                                    <p class="text-success small mb-0 mt-1">
+                                        <i class="fe fe-check-circle me-1"></i>Package Renewed for <?= htmlspecialchars($month_name) ?>.
                                     </p>
                                 <?php else : ?>
                                     <p class="text-muted small mb-0 mt-1">
@@ -252,9 +286,13 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                                             data-months-str="<?= htmlspecialchars(implode(', ', $cum_month_names)) ?>">
                                         <i class="fe fe-credit-card me-1"></i><?= ($cum_count > 1) ? 'Renew All ' . $cum_count . ' Months' : 'Renew & Pay' ?>
                                     </button>
-                                <?php else : ?>
+                                <?php elseif ($is_past_renewed) : ?>
                                     <div class="d-inline-flex align-items-center gap-1 p-2 px-3 rounded-pill bg-success-transparent text-success border border-success-subtle fw-semibold" style="font-size:.82rem;">
-                                        <i class="fe fe-check-circle me-1"></i>Next Auto-Debit: <?= $exp_date ?>
+                                        <i class="fe fe-check-circle me-1"></i>Renewed (Auto-Debited)
+                                    </div>
+                                <?php else : ?>
+                                    <div class="d-inline-flex align-items-center gap-1 p-2 px-3 rounded-pill bg-primary-transparent text-primary border border-primary-subtle fw-semibold" style="font-size:.82rem;">
+                                        <i class="fe fe-clock me-1"></i>Next Auto-Debit: <?= $exp_date ?>
                                     </div>
                                 <?php endif; ?>
                             </div>

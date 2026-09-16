@@ -101,11 +101,35 @@ class Wallet_model extends CI_Model{
         return round($purchases_credit + $acc_credit, 2);
     }
 
+    public function get_credit_percent($user_id){
+        $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
+        if (!empty($customer) && isset($customer['credit_percent']) && $customer['credit_percent'] !== '' && $customer['credit_percent'] !== null) {
+            return (float)$customer['credit_percent'];
+        }
+        $global = $this->db->get_where('credit_limit_percentage', ['status' => 1])->unbuffered_row('array');
+        if (!empty($global) && isset($global['percent'])) {
+            return (float)$global['percent'];
+        }
+        return 0.00;
+    }
+
+    public function get_used_credit_tax($user_id){
+        $used_credit = $this->get_used_credit($user_id);
+        $percent = $this->get_credit_percent($user_id);
+        return round(($used_credit * $percent) / 100, 2);
+    }
+
+    public function get_total_used_credit_with_tax($user_id){
+        $used_credit = $this->get_used_credit($user_id);
+        $tax = $this->get_used_credit_tax($user_id);
+        return round($used_credit + $tax, 2);
+    }
+
     public function get_available_credit($user_id){
         $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
         $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
-        $used_credit = $this->get_used_credit($user_id);
-        $available = $credit_limit - $used_credit;
+        $total_used_with_tax = $this->get_total_used_credit_with_tax($user_id);
+        $available = $credit_limit - $total_used_with_tax;
         return max(0.00, round($available, 2));
     }
     

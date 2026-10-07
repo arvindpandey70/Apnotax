@@ -90,23 +90,27 @@ class Wallet_model extends CI_Model{
     public function get_used_credit($user_id){
         $this->db->select_sum('amount');
         $this->db->where(['user_id' => $user_id, 'type' => 'Credit limit']);
-        $purchases_credit = $this->db->get("purchases")->unbuffered_row()->amount;
-        $purchases_credit = !empty($purchases_credit) ? (float)$purchases_credit : 0.00;
+        $res1 = $this->db->get("purchases");
+        $row1 = $res1 ? $res1->unbuffered_row() : null;
+        $purchases_credit = !empty($row1) && isset($row1->amount) ? (float)$row1->amount : 0.00;
 
         $this->db->select_sum('amount');
         $this->db->where(['user_id' => $user_id, 'payment_mode' => 'Credit Limit']);
-        $acc_credit = $this->db->get("acc_payment")->unbuffered_row()->amount;
-        $acc_credit = !empty($acc_credit) ? (float)$acc_credit : 0.00;
+        $res2 = $this->db->get("acc_payment");
+        $row2 = $res2 ? $res2->unbuffered_row() : null;
+        $acc_credit = !empty($row2) && isset($row2->amount) ? (float)$row2->amount : 0.00;
 
         return round($purchases_credit + $acc_credit, 2);
     }
 
     public function get_credit_percent($user_id){
-        $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
+        $res_cust = $this->db->get_where('customers', ['user_id' => $user_id]);
+        $customer = $res_cust ? $res_cust->unbuffered_row('array') : null;
         if (!empty($customer) && isset($customer['credit_percent']) && $customer['credit_percent'] !== '' && $customer['credit_percent'] !== null) {
             return (float)$customer['credit_percent'];
         }
-        $global = $this->db->get_where('credit_limit_percentage', ['status' => 1])->unbuffered_row('array');
+        $res_glob = $this->db->get_where('credit_limit_percentage', ['status' => 1]);
+        $global = $res_glob ? $res_glob->unbuffered_row('array') : null;
         if (!empty($global) && isset($global['percent'])) {
             return (float)$global['percent'];
         }
@@ -126,7 +130,8 @@ class Wallet_model extends CI_Model{
     }
 
     public function get_available_credit($user_id){
-        $customer = $this->db->get_where('customers', ['user_id' => $user_id])->unbuffered_row('array');
+        $res_cust = $this->db->get_where('customers', ['user_id' => $user_id]);
+        $customer = $res_cust ? $res_cust->unbuffered_row('array') : null;
         $credit_limit = !empty($customer['credit_limit']) ? (float)$customer['credit_limit'] : 0.00;
         $total_used_with_tax = $this->get_total_used_credit_with_tax($user_id);
         $available = $credit_limit - $total_used_with_tax;
@@ -136,7 +141,9 @@ class Wallet_model extends CI_Model{
     public function getsecuritydeposit($user_id){
         $this->db->select_sum('amount');
         $this->db->where(['user_id'=>$user_id]);
-        $security=$this->db->get("security_deposit")->unbuffered_row()->amount;
+        $res_sec = $this->db->get("security_deposit");
+        $row_sec = $res_sec ? $res_sec->unbuffered_row() : null;
+        $security = !empty($row_sec) && isset($row_sec->amount) ? $row_sec->amount : 0;
         return !empty($security)?$security:0;
     }
     

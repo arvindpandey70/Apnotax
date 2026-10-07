@@ -102,8 +102,8 @@ if (ENVIRONMENT === 'development') {
     
     $db['default'] = array(
         'dsn'       => '',
-        'hostname'  => '127.0.0.1',
-        'username'  => 'root',
+        'hostname'  => 'localhost',
+        'username'  => 'apnotax_user',
         'password'  => 'Root@1234',
         'database'  => 'db_taxefi',
         'dbdriver'  => 'mysqli',

@@ -16,9 +16,10 @@ class Creditlimit extends CI_Controller
         $data['datatable'] = true;
         
         if ($this->session->role == 'admin') {
-            $data['customers'] = $this->db->select('t1.id as customer_id, t1.name, t1.mobile, t1.email, t1.credit_limit, t1.credit_percent, t1.user_id')
-                                          ->from('customers as t1')
-                                          ->get()->result_array();
+            $query = $this->db->select('t1.id as customer_id, t1.name, t1.mobile, t1.email, t1.credit_limit, t1.credit_percent, t1.user_id')
+                               ->from('customers as t1')
+                               ->get();
+            $data['customers'] = ($query && is_object($query)) ? $query->result_array() : [];
                                           
             $this->load->model('Wallet_model', 'wallet');
             // Calculate used credit, tax, total used, and available credit for all customers

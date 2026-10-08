@@ -75,7 +75,8 @@ class Creditlimit extends CI_Controller
         $data['breadcrumb'] = array("active" => "Credit Limit Percentage");
         $data['datatable'] = true;
 
-        $data['percentages'] = $this->db->order_by('id', 'DESC')->get('credit_limit_percentage')->result_array();
+        $query = $this->db->order_by('id', 'DESC')->get('credit_limit_percentage');
+        $data['percentages'] = ($query && is_object($query)) ? $query->result_array() : [];
 
         $this->template->load('creditlimit', 'percentage', $data);
     }
@@ -129,7 +130,8 @@ class Creditlimit extends CI_Controller
             return;
         }
         $id = $this->input->post('id');
-        $row = $this->db->get_where('credit_limit_percentage', ['id' => $id])->unbuffered_row('array');
+        $res = $this->db->get_where('credit_limit_percentage', ['id' => $id]);
+        $row = ($res && is_object($res)) ? $res->unbuffered_row('array') : null;
         echo json_encode($row);
     }
 

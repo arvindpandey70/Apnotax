@@ -28,8 +28,9 @@
                 <div class="table-responsive">
                     <table class="table table-bordered">
                         <?php
-                        $row_gst_rate = !empty($gst_rate) ? floatval($gst_rate) : 18.0;
+                        $row_gst_rate = isset($gst_rate) ? floatval($gst_rate) : 18.0;
                         $total_gst_col = 0;
+                        $previous_unpaid_balance = 0;
                         ?>
                         <thead>
                             <tr>
@@ -50,7 +51,11 @@
                         </thead>
                         <tbody>
                             <?php foreach ($records_to_display as $month) {
-                                $base_for_gst = isset($month['gross_total']) ? $month['gross_total'] : ($month['outstanding'] + $month['acc_fees'] + $month['penalty']);
+                                $month_balance = isset($month['balance']) ? (float)$month['balance'] : 0;
+                                $base_for_gst = max(0, $month_balance - $previous_unpaid_balance);
+                                if ($base_for_gst > 0) {
+                                    $previous_unpaid_balance = $month_balance;
+                                }
                                 $row_gst = $row_gst_rate > 0 ? round(($base_for_gst * $row_gst_rate) / 100, 2) : 0;
                                 $total_gst_col += $row_gst;
                                 $is_paid = ($month['balance'] <= 0 && $month['paid'] > 0);

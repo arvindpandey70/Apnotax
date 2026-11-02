@@ -16,6 +16,77 @@ class Reports extends CI_Controller
         }
     }
 
+    private function calculate_accountancy_fee($package_name, $total_turnover)
+    {
+        $packages = $this->master->getpackages(array('name' => $package_name, 'status' => 1), 'all');
+        $regular_slabs = array();
+        $per_unit_slab = null;
+
+        foreach ($packages as $package) {
+            if (
+                !isset($package['turnover'], $package['rate'])
+                || !is_numeric($package['turnover'])
+                || !is_numeric($package['rate'])
+                || (float)$package['rate'] < 0
+            ) {
+                continue;
+            }
+
+            if (stripos(isset($package['remarks']) ? $package['remarks'] : '', 'Per 100 Lac') !== false) {
+                $per_unit_slab = $package;
+                continue;
+            }
+
+            if ((float)$package['turnover'] > 0) {
+                $regular_slabs[] = $package;
+            }
+        }
+
+        if (empty($regular_slabs)) {
+            return array(
+                'status' => false,
+                'message' => 'No active turnover slabs are configured for ' . $package_name . '. Please ask the administrator to configure the package rates.'
+            );
+        }
+
+        usort($regular_slabs, function ($left, $right) {
+            return (float)$left['turnover'] <=> (float)$right['turnover'];
+        });
+
+        $selected_slab = reset($regular_slabs);
+        foreach ($regular_slabs as $slab) {
+            if ($total_turnover >= (float)$slab['turnover']) {
+                $selected_slab = $slab;
+            } else {
+                break;
+            }
+        }
+
+        $fees = $total_turnover > 0 ? (float)$selected_slab['rate'] : 0;
+        $highest_slab = end($regular_slabs);
+        $highest_slab_turnover = (float)$highest_slab['turnover'];
+
+        if ($total_turnover > $highest_slab_turnover) {
+            if (empty($per_unit_slab) || (float)$per_unit_slab['turnover'] <= 0) {
+                return array(
+                    'status' => false,
+                    'message' => 'The active ' . $package_name . ' package is missing a valid Per 100 Lac rate for turnover above its highest slab.'
+                );
+            }
+
+            $extra_turnover = $total_turnover - $highest_slab_turnover;
+            $fees = (float)$highest_slab['rate']
+                + ($extra_turnover / (float)$per_unit_slab['turnover']) * (float)$per_unit_slab['rate'];
+            $selected_slab = $per_unit_slab;
+        }
+
+        return array(
+            'status' => true,
+            'package' => $selected_slab,
+            'fees' => round($fees, 2)
+        );
+    }
+
     /**
      * Get accountancy report data and calculations for a user, firm, and financial year.
      * Shared by index() (Accounting Mode), payment() (Accounting Pay), and processpayment().
@@ -61,50 +132,16 @@ class Reports extends CI_Controller
         $turnover = array_sum($turnovers);
         $total_turnover = $turnover;
         $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-        $package = $this->master->getpackages(['name' => $name, 'turnover>' => $turnover], 'single');
-        if (empty($package)) {
-            $package = $this->master->getpackages(['name' => $name], 'single');
+        $fee_data = $this->calculate_accountancy_fee($name, $total_turnover);
+        if (!$fee_data['status']) {
+            return array('status' => false, 'message' => $fee_data['message'], 'redirect' => 'reports/');
         }
+        $package = $fee_data['package'];
 
         $date = date('Y-m-d');
         $percent = 2 / 100;
 
-        // Slab-based Prime / Premium plan fee
-        if (isset($name) && $name === 'Accountancy Prime') {
-            $gto = $total_turnover / 100000;
-            if ($gto <= 0) {
-                $fees = 0;
-            } else if ($gto <= 25) {
-                $fees = (12000 / 25) * $gto;
-            } else if ($gto <= 50) {
-                $fees = (20000 / 50) * $gto;
-            } else if ($gto <= 75) {
-                $fees = (25000 / 75) * $gto;
-            } else if ($gto <= 100) {
-                $fees = (30000 / 100) * $gto;
-            } else {
-                $fees = 30000 + (($gto - 100) * (10000 / 100));
-            }
-            $fees = round($fees, 2);
-        } else if (isset($name) && $name === 'Accountancy Premium') {
-            $gto = $total_turnover / 100000;
-            if ($gto <= 0) {
-                $fees = 0;
-            } else if ($gto <= 25) {
-                $fees = (15000 / 25) * $gto;
-            } else if ($gto <= 50) {
-                $fees = (24000 / 50) * $gto;
-            } else if ($gto <= 75) {
-                $fees = (30000 / 75) * $gto;
-            } else if ($gto <= 100) {
-                $fees = (36000 / 100) * $gto;
-            } else {
-                $fees = 36000 + (($gto - 100) * (15000 / 100));
-            }
-            $fees = round($fees, 2);
-        } else {
-            $fees = !empty($package['turnover']) ? ($total_turnover / $package['turnover']) * $package['rate'] : 0;
-        }
+        $fees = $fee_data['fees'];
 
         $count = count($accountancy);
         $last = end($accountancy);

@@ -102,7 +102,7 @@ class Reports extends CI_Controller
         $where = array('user_id' => $user_id, 'status' => 1);
         $query = $this->db->get_where('customer_packages', $where);
         if ($query->num_rows() == 0) {
-            return array('status' => false, 'message' => 'Package not Active!', 'redirect' => 'reports/');
+            return array('status' => false, 'message' => 'Package not Active!', 'redirect' => 'home/');
         }
 
         $cpackage = $query->unbuffered_row('array');
@@ -125,7 +125,7 @@ class Reports extends CI_Controller
         $accountancy = $this->service->getturnoverswithpayment($where2);
 
         if (empty($accountancy)) {
-            return array('status' => false, 'message' => 'No Data Found!', 'redirect' => 'reports/');
+            return array('status' => false, 'message' => 'No Data Found!', 'redirect' => 'home/');
         }
 
         $turnovers = !empty($accountancy) ? array_column($accountancy, 'turnover') : array(0);
@@ -134,7 +134,7 @@ class Reports extends CI_Controller
         $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
         $fee_data = $this->calculate_accountancy_fee($name, $total_turnover);
         if (!$fee_data['status']) {
-            return array('status' => false, 'message' => $fee_data['message'], 'redirect' => 'reports/');
+            return array('status' => false, 'message' => $fee_data['message'], 'redirect' => 'home/');
         }
         $package = $fee_data['package'];
 
@@ -410,7 +410,7 @@ class Reports extends CI_Controller
         // Validate required session data
         if (empty($year) || empty($firm_id)) {
             $this->session->set_flashdata('err_msg', 'Please select Year and Firm!');
-            redirect($_SERVER['HTTP_REFERER'] ?? 'home/');
+            redirect('home/');
             return;
         }
 
@@ -1610,14 +1610,14 @@ class Reports extends CI_Controller
         // Validate required session data
         if (empty($year) || empty($firm_id)) {
             $this->session->set_flashdata('err_msg', 'Please select Year and Firm!');
-            redirect('reports/');
+            redirect('home/');
             return;
         }
 
         $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
         if (!$acc_data['status']) {
             $this->session->set_flashdata('err_msg', $acc_data['message']);
-            redirect('reports/');
+            redirect($acc_data['redirect'] ?? 'home/');
             return;
         }
 
@@ -1747,7 +1747,7 @@ class Reports extends CI_Controller
             $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
             if (!$acc_data['status']) {
                 $this->session->set_flashdata('err_msg', $acc_data['message']);
-                redirect('reports/payment/');
+                redirect($acc_data['redirect'] ?? 'home/');
                 return;
             }
 

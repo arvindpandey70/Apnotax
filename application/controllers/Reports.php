@@ -16,6 +16,350 @@ class Reports extends CI_Controller
         }
     }
 
+    /**
+     * Get accountancy report data and calculations for a user, firm, and financial year.
+     * Shared by index() (Accounting Mode), payment() (Accounting Pay), and processpayment().
+     */
+    private function get_accountancy_report_data($user_id, $firm_id, $year)
+    {
+        $yearval = getyearmonthvalues($year);
+        $year1 = $yearval['year1'];
+        $year2 = $yearval['year2'];
+        $from = "$year1-04-01";
+        $to = "$year2-03-31";
+
+        $where = array('user_id' => $user_id, 'status' => 1);
+        $query = $this->db->get_where('customer_packages', $where);
+        if ($query->num_rows() == 0) {
+            return array('status' => false, 'message' => 'Package not Active!', 'redirect' => 'reports/');
+        }
+
+        $cpackage = $query->unbuffered_row('array');
+        $pkg_type = !empty($cpackage['package_type']) ? $cpackage['package_type'] : 'Turnover';
+
+        // Accounting Fee / Pay is only for Turnover type packages
+        if ($pkg_type == 'Monthly') {
+            return array(
+                'status' => false,
+                'message' => 'Accounting Fee is not available for Monthly type packages. Monthly packages are auto-debited based on the fixed amount.',
+                'redirect' => 'package/'
+            );
+        }
+
+        $user_id_escaped = $this->db->escape($user_id);
+        $firm_id_escaped = $this->db->escape($firm_id);
+        $from_escaped = $this->db->escape($from);
+        $to_escaped = $this->db->escape($to);
+        $where2 = "t1.user_id={$user_id_escaped} AND t1.firm_id={$firm_id_escaped} AND t1.date>={$from_escaped} AND t1.date<={$to_escaped}";
+        $accountancy = $this->service->getturnoverswithpayment($where2);
+
+        if (empty($accountancy)) {
+            return array('status' => false, 'message' => 'No Data Found!', 'redirect' => 'reports/');
+        }
+
+        $turnovers = !empty($accountancy) ? array_column($accountancy, 'turnover') : array(0);
+        $turnover = array_sum($turnovers);
+        $total_turnover = $turnover;
+        $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
+        $package = $this->master->getpackages(['name' => $name, 'turnover>' => $turnover], 'single');
+        if (empty($package)) {
+            $package = $this->master->getpackages(['name' => $name], 'single');
+        }
+
+        $date = date('Y-m-d');
+        $percent = 2 / 100;
+
+        // Slab-based Prime / Premium plan fee
+        if (isset($name) && $name === 'Accountancy Prime') {
+            $gto = $total_turnover / 100000;
+            if ($gto <= 0) {
+                $fees = 0;
+            } else if ($gto <= 25) {
+                $fees = (12000 / 25) * $gto;
+            } else if ($gto <= 50) {
+                $fees = (20000 / 50) * $gto;
+            } else if ($gto <= 75) {
+                $fees = (25000 / 75) * $gto;
+            } else if ($gto <= 100) {
+                $fees = (30000 / 100) * $gto;
+            } else {
+                $fees = 30000 + (($gto - 100) * (10000 / 100));
+            }
+            $fees = round($fees, 2);
+        } else if (isset($name) && $name === 'Accountancy Premium') {
+            $gto = $total_turnover / 100000;
+            if ($gto <= 0) {
+                $fees = 0;
+            } else if ($gto <= 25) {
+                $fees = (15000 / 25) * $gto;
+            } else if ($gto <= 50) {
+                $fees = (24000 / 50) * $gto;
+            } else if ($gto <= 75) {
+                $fees = (30000 / 75) * $gto;
+            } else if ($gto <= 100) {
+                $fees = (36000 / 100) * $gto;
+            } else {
+                $fees = 36000 + (($gto - 100) * (15000 / 100));
+            }
+            $fees = round($fees, 2);
+        } else {
+            $fees = !empty($package['turnover']) ? ($total_turnover / $package['turnover']) * $package['rate'] : 0;
+        }
+
+        $count = count($accountancy);
+        $last = end($accountancy);
+        if ($last['date'] == '') {
+            $count--;
+        }
+
+        $activeMonthsCount = 0;
+        foreach ($accountancy as $acct) {
+            if (isset($acct['turnover']) && $acct['turnover'] > 0) {
+                $activeMonthsCount++;
+            }
+        }
+
+        $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
+        $acc_fees_default = $count > 0 ? ($fees / $count) : 0;
+
+        $total_fees = $total_other = $total_paid = $total_penalty = $total_days = 0;
+        $outstanding = $total = $balance = 0;
+        $total_sum = 0;
+        $total_balance_sum = 0;
+        $records = array();
+        $unpaid_months = array();
+
+        foreach ($accountancy as &$single) {
+            $days = $paid = $penalty = 0;
+            $paid = !empty($single['paid']) ? $single['paid'] : 0;
+
+            // Outstanding should be the previous month's balance
+            $outstanding = $balance;
+
+            if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
+                if (isset($single['turnover']) && $single['turnover'] > 0) {
+                    $acc_fees = $monthlyAccountsFee;
+                } else {
+                    $acc_fees = 0;
+                }
+            } else {
+                if ($single['date'] != '') {
+                    $acc_fees = $acc_fees_default;
+                } else {
+                    $acc_fees = 0;
+                }
+            }
+
+            $other_fee = $single['other_fee'] ?? 0;
+            $total_other += $other_fee;
+            $balance = round($outstanding + $acc_fees + $other_fee, 2);
+
+            // Store gross total BEFORE subtracting paid (for display on paid months)
+            $gross_total = $balance;
+
+            // Display-only: calculate delay days and late fee regardless of payment status
+            $display_days = 0;
+            $display_penalty = 0;
+            if (!empty($single['due_date']) && $single['due_date'] < $date && $gross_total > 0) {
+                $due_dt   = new DateTime($single['due_date']);
+                // For paid months use payment_date, for unpaid use today
+                $ref_date = (!empty($single['payment_date']))
+                    ? new DateTime(date('Y-m-d', strtotime($single['payment_date'])))
+                    : new DateTime($date);
+                $display_days = (int)$due_dt->diff($ref_date)->days;
+                $display_penalty = ($percent * $gross_total);
+                if ($display_days < 30) {
+                    $display_penalty = ($display_penalty / 30) * $display_days;
+                }
+                $display_penalty = round($display_penalty);
+            }
+
+            if ($single['due_date'] < $date && $paid < $balance) {
+                $balance = round($balance - $paid, 2);
+                $date1 = new DateTime($single['due_date']);
+                $date2 = new DateTime($date);
+                $interval = $date1->diff($date2);
+                $days = $interval->days;
+                $penalty = ($percent * $balance);
+                if ($days < 30) {
+                    $penalty /= 30;
+                    $penalty *= $days;
+                }
+                $penalty = round($penalty);
+                $total_penalty += $penalty;
+                $total_days += $days;
+            } else {
+                $balance = round($balance - $paid, 2);
+            }
+
+            if ($balance < 0) {
+                $balance = 0;
+            }
+            $total = round($balance + $penalty, 2);
+
+            // --- AUTO DEBIT LOGIC ---
+            $auto_debit_status = $single['auto_debit_status'] ?? 'Pending';
+            if ($auto_debit_status !== 'Confirmed' && $single['due_date'] <= $date && $total > 0) {
+                $this->load->model('Wallet_model', 'wallet');
+                $wallet_bal = $this->wallet->getwalletbalance($user_id);
+                if ($wallet_bal >= $total) {
+                    $payment_data = array(
+                        'user_id' => $user_id,
+                        'firm_id' => $firm_id,
+                        'amount' => $total,
+                        'acc_date' => $single['date'],
+                        'added_on' => date('Y-m-d H:i:s'),
+                        'updated_on' => date('Y-m-d H:i:s')
+                    );
+                    $this->db->insert('acc_payment', $payment_data);
+                    $this->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $single['id']]);
+                    $paid += $total;
+                    $auto_debit_status = 'Confirmed';
+                    $single['auto_debit_status'] = 'Confirmed';
+                    $single['payment_date'] = date('Y-m-d H:i:s');
+                    $balance = 0;
+                    $total = 0;
+                }
+            }
+            // --- END AUTO DEBIT LOGIC ---
+
+            $total_sum += $total;
+            $total_fees += $acc_fees;
+            $total_paid += $paid;
+            $total_balance_sum += $balance;
+
+            $isPastMonth = false;
+            $renewalMethod = 'AUTO_WALLET';
+            $auto_debit_status_label = isset($auto_debit_status) ? $auto_debit_status : 'Pending';
+
+            if ($single['date'] != '') {
+                $todayDate = new DateTime(date('Y-m-d'));
+                $todayDate->setTime(0, 0, 0);
+
+                $rowDate = new DateTime($single['date']);
+                $rowDate->setTime(0, 0, 0);
+
+                $isPastMonth = (date('Y-m', $rowDate->getTimestamp()) < date('Y-m', $todayDate->getTimestamp()));
+                $renewalMethod = $isPastMonth ? 'ADMIN' : 'AUTO_WALLET';
+
+                if ($auto_debit_status_label !== 'Confirmed') {
+                    if ($isPastMonth) {
+                        if ($total > 0) {
+                            $auto_debit_status_label = 'Admin Renew';
+                        } else {
+                            $auto_debit_status_label = 'Renewed';
+                        }
+                    } else {
+                        if (!empty($single['due_date'])) {
+                            $dueDateObj = new DateTime($single['due_date']);
+                            $dueDateObj->setTime(0, 0, 0);
+
+                            $interval = $todayDate->diff($dueDateObj);
+                            $daysLeft = (int)$interval->format('%R%a');
+
+                            if ($daysLeft > 0) {
+                                $auto_debit_status_label = $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' left auto debit';
+                            } else if ($daysLeft === 0) {
+                                $auto_debit_status_label = 'Auto debit today';
+                            } else {
+                                $auto_debit_status_label = 'Auto debit processing';
+                            }
+                        } else {
+                            $auto_debit_status_label = 'Pending';
+                        }
+                    }
+                }
+            }
+
+            $month = $single['date'] != '' ? date('F-y', strtotime($single['date'])) : '--';
+            $due_date = $single['due_date'] != '' ? date('d-m-Y F', strtotime($single['due_date'])) : '--';
+
+            $auto_debit_status_html = '';
+            if ($auto_debit_status_label === 'Confirmed') {
+                $auto_debit_status_html = '<span class="badge bg-success">Confirmed</span>';
+            } else {
+                $auto_debit_status_html = '<span class="badge bg-warning text-dark">' . $auto_debit_status_label . '</span>';
+            }
+
+            $action_date_html = '';
+            if ($auto_debit_status_label === 'Confirmed' || $paid > 0) {
+                $p_date = !empty($single['payment_date']) ? date('d-m-Y', strtotime($single['payment_date'])) : '';
+                $action_date_html = '<span class="text-success font-weight-bold"><i class="fa fa-check-circle"></i> Confirmed<br><small>' . $p_date . '</small></span>';
+            } else {
+                if ($renewalMethod === 'ADMIN') {
+                    $action_date_html = 'Admin Renew';
+                } else {
+                    $action_date_html = '<span class="text-muted">Auto Debit</span>';
+                }
+            }
+
+            $record = array(
+                'id' => $single['id'],
+                'date' => $single['date'],
+                'month' => $month,
+                'due_date' => $due_date,
+                'outstanding' => round($outstanding, 2),
+                'gto' => round($single['turnover'], 2),
+                'acc_fees' => round($acc_fees, 2),
+                'penalty' => round($penalty, 2),
+                'display_penalty' => $display_penalty,
+                'gross_total' => round($gross_total + $penalty, 2),
+                'total' => round($total, 2),
+                'paid' => round($paid, 2),
+                'balance' => round($balance, 2),
+                'days' => $days,
+                'display_days' => $display_days,
+                'due_days' => $days,
+                'auto_debit_status' => $auto_debit_status_label,
+                'auto_debit_status_label' => $auto_debit_status_html,
+                'action_date' => $action_date_html
+            );
+
+            $records[] = $record;
+
+            if ($balance > 0) {
+                $unpaid_months[] = $record;
+            }
+        }
+
+        $last_month_balance = 0;
+        $last_month_data = null;
+        $first_month_data = null;
+        $payment_month_range = '';
+
+        if (!empty($unpaid_months)) {
+            $first_month_data = reset($unpaid_months);
+            $last_month_data = end($unpaid_months);
+            $last_month_balance = $last_month_data['balance'];
+
+            if (count($unpaid_months) > 1) {
+                $payment_month_range = $first_month_data['month'] . '-' . $last_month_data['month'];
+            } else {
+                $payment_month_range = $last_month_data['month'];
+            }
+        }
+
+        return array(
+            'status' => true,
+            'package' => $package,
+            'cpackage' => $cpackage,
+            'records' => $records,
+            'unpaid_months' => $unpaid_months,
+            'total_turnover' => $total_turnover,
+            'total_fees' => $total_fees,
+            'total_penalty' => $total_penalty,
+            'total_sum' => $total_sum,
+            'total_paid' => $total_paid,
+            'total_balance' => $total_balance_sum,
+            'total_days' => $total_days,
+            'last_month_balance' => $last_month_balance,
+            'last_month_data' => $last_month_data,
+            'first_month_data' => $first_month_data,
+            'payment_month_range' => $payment_month_range,
+            'accountancy' => $accountancy
+        );
+    }
+
     public function index()
     {
         $data = ['title' => 'Accounting Fee'];
@@ -33,358 +377,57 @@ class Reports extends CI_Controller
             return;
         }
 
-        $yearval = getyearmonthvalues($year);
-        $year1 = $yearval['year1'];
-        $year2 = $yearval['year2'];
-        $from = "$year1-04-01";
-        $to = "$year2-03-31";
-        $where = array('user_id' => $user_id, 'status' => 1);
-        $query = $this->db->get_where('customer_packages', $where);
-        if ($query->num_rows() > 0) {
-            $cpackage = $query->unbuffered_row('array');
-            $pkg_type = !empty($cpackage['package_type']) ? $cpackage['package_type'] : 'Turnover';
-
-            // Accounting Fee is only for Turnover type packages
-            // Monthly type packages don't use turnover-based fee calculation
-            if ($pkg_type == 'Monthly') {
-                $this->session->set_flashdata('err_msg', 'Accounting Fee is not available for Monthly type packages. Monthly packages are auto-debited based on the fixed amount.');
-                redirect('package/');
-                return;
-            }
-
-            // Use proper escaping for SQL query
-            $user_id_escaped = $this->db->escape($user_id);
-            $firm_id_escaped = $this->db->escape($firm_id);
-            $from_escaped = $this->db->escape($from);
-            $to_escaped = $this->db->escape($to);
-            $where2 = "t1.user_id={$user_id_escaped} AND t1.firm_id={$firm_id_escaped} AND t1.date>={$from_escaped} AND t1.date<={$to_escaped}";
-            $accountancy = $this->service->getturnoverswithpayment($where2);
-
-            // Log for debugging (only in development)
-            if (ENVIRONMENT !== 'production') {
-                log_message('debug', 'Reports index - User ID: ' . $user_id . ', Firm ID: ' . $firm_id . ', Year: ' . $year);
-                log_message('debug', 'Reports index - Date range: ' . $from . ' to ' . $to);
-                log_message('debug', 'Reports index - Accountancy records found: ' . count($accountancy));
-            }
-
-            $turnovers = !empty($accountancy) ? array_column($accountancy, 'turnover') : array(0);
-            $turnover = array_sum($turnovers);
-            $total_turnover = $turnover;
-            $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-            $package = $this->master->getpackages(['name' => $name, 'turnover>' => $turnover], 'single');
-            $date = date('Y-m-d');
-            $percent = 2 / 100;
-            $report = array();
-            if (!empty($accountancy)) {
-                $total_fees = $total_other = $total_paid = $total_penalty = $total_days = 0;
-                $outstanding = $total = $balance = 0;
-                $total_sum = 0;
-                // Slab-based Prime plan fee, per updated remuneration table
-                if (isset($name) && $name === 'Accountancy Prime') {
-                    $gto = $total_turnover / 100000;
-                    if ($gto <= 0) {
-                        $fees = 0;
-                    } else if ($gto <= 25) {
-                        $fees = (12000 / 25) * $gto;
-                    } else if ($gto <= 50) {
-                        $fees = (20000 / 50) * $gto;
-                    } else if ($gto <= 75) {
-                        $fees = (25000 / 75) * $gto;
-                    } else if ($gto <= 100) {
-                        $fees = (30000 / 100) * $gto;
-                    } else {
-                        $fees = 30000 + (($gto - 100) * (10000 / 100));
-                    }
-                    $fees = round($fees, 2);
-                } else if (isset($name) && $name === 'Accountancy Premium') {
-                    // Slab-based Premium plan fee, per updated remuneration table
-                    $gto = $total_turnover / 100000;
-                    if ($gto <= 0) {
-                        $fees = 0;
-                    } else if ($gto <= 25) {
-                        $fees = (15000 / 25) * $gto;
-                    } else if ($gto <= 50) {
-                        $fees = (24000 / 50) * $gto;
-                    } else if ($gto <= 75) {
-                        $fees = (30000 / 75) * $gto;
-                    } else if ($gto <= 100) {
-                        $fees = (36000 / 100) * $gto;
-                    } else {
-                        $fees = 36000 + (($gto - 100) * (15000 / 100));
-                    }
-                    $fees = round($fees, 2);
-                } else {
-                    $fees = $total_turnover / $package['turnover'];
-                    $fees *= $package['rate'];
-                }
-                $count = count($accountancy);
-
-                $last = end($accountancy);
-
-                if ($last['date'] == '') {
-
-                    $count--;
-
-                }
-
-                $activeMonthsCount = 0;
-
-                foreach ($accountancy as $acct) {
-
-                    if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-
-                        $activeMonthsCount++;
-
-                    }
-
-                }
-
-                $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-
-                $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-
-                foreach ($accountancy as &$single) {
-
-                    $days = $paid = $penalty = 0;
-
-                    $paid = !empty($single['paid']) ? $single['paid'] : 0;
-
-                    // Outstanding should be the previous month's balance (unpaid amount)
-                    $outstanding = $balance;
-
-                    if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-
-                        if (isset($single['turnover']) && $single['turnover'] > 0) {
-
-                            $acc_fees = $monthlyAccountsFee;
-
-                        } else {
-
-                            $acc_fees = 0;
-
-                        }
-
-                    } else {
-
-                        if ($single['date'] != '') {
-
-                            $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-                        } else {
-
-                            $acc_fees = 0;
-
-                        }
-
-                    }
-                    $other_fee = $single['other_fee'] ?? 0;
-                    $total_other += $other_fee;
-                    $balance = $outstanding + $acc_fees + $other_fee;
-                    if ($single['due_date'] < $date && $paid < $balance) {
-                        $balance -= $paid;
-                        $date1 = new DateTime($single['due_date']);
-                        $date2 = new DateTime($date);
-
-                        // Calculate the difference
-                        $interval = $date1->diff($date2);
-
-                        // Get the difference in days
-                        $days = $interval->days;
-                        $penalty = ($percent * $balance);
-                        if ($days < 30) {
-                            $penalty /= 30;
-                            $penalty *= $days;
-                        }
-                        $penalty = round($penalty);
-                        $total_penalty += $penalty;
-                        $total_days += $days;
-                    } else {
-                        $balance -= $paid;
-                    }
-                    // Ensure balance doesn't go negative
-                    if ($balance < 0) {
-                        $balance = 0;
-                    }
-                    $total = $balance + $penalty;
-                    
-                    // --- AUTO DEBIT LOGIC ---
-                    $auto_debit_status = $single['auto_debit_status'] ?? 'Pending';
-                    if ($auto_debit_status !== 'Confirmed' && $single['due_date'] <= $date && $total > 0) {
-                        $wallet_bal = $this->wallet->getwalletbalance($user_id);
-                        if ($wallet_bal >= $total) {
-                            $payment_data = array(
-                                'user_id' => $user_id,
-                                'firm_id' => $firm_id,
-                                'amount' => $total,
-                                'acc_date' => $single['date'],
-                                'added_on' => date('Y-m-d H:i:s'),
-                                'updated_on' => date('Y-m-d H:i:s')
-                            );
-                            $this->db->insert('acc_payment', $payment_data);
-                            $this->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $single['id']]);
-                            $paid += $total;
-                            $auto_debit_status = 'Confirmed';
-                            $single['auto_debit_status'] = 'Confirmed';
-                            $single['payment_date'] = date('Y-m-d H:i:s');
-                            $balance = 0;
-                            $total = 0;
-                        }
-                    }
-                    // --- END AUTO DEBIT LOGIC ---
-
-                    $total_sum += $total;
-                    $total_fees += $acc_fees;
-                    $total_paid += $paid;
-
-                    $isPastMonth = false;
-
-                    $renewalMethod = 'AUTO_WALLET';
-
-                    $auto_debit_status_label = isset($auto_debit_status) ? $auto_debit_status : 'Pending';
-
-
-                    if ($single['date'] != '') {
-
-                        $todayDate = new DateTime(date('Y-m-d'));
-
-                        $todayDate->setTime(0, 0, 0);
-
-                        
-
-                        $rowDate = new DateTime($single['date']);
-
-                        $rowDate->setTime(0, 0, 0);
-
-                        
-
-                        $isPastMonth = (date('Y-m', $rowDate->getTimestamp()) < date('Y-m', $todayDate->getTimestamp()));
-
-                        $renewalMethod = $isPastMonth ? 'ADMIN' : 'AUTO_WALLET';
-
-                        
-
-                        if ($auto_debit_status_label !== 'Confirmed') {
-
-                            if ($isPastMonth) {
-
-                                if ($total > 0) {
-
-                                    $auto_debit_status_label = 'Admin Renew';
-
-                                } else {
-
-                                    $auto_debit_status_label = 'Renewed';
-
-                                }
-
-                            } else {
-
-                                if (!empty($single['due_date'])) {
-
-                                    $dueDateObj = new DateTime($single['due_date']);
-
-                                    $dueDateObj->setTime(0, 0, 0);
-
-                                    
-
-                                    $interval = $todayDate->diff($dueDateObj);
-
-                                    $daysLeft = (int)$interval->format('%R%a');
-
-                                    
-
-                                    if ($daysLeft > 0) {
-
-                                        $auto_debit_status_label = $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' left auto debit';
-
-                                    } else if ($daysLeft === 0) {
-
-                                        $auto_debit_status_label = 'Auto debit today';
-
-                                    } else {
-
-                                        $auto_debit_status_label = 'Auto debit processing';
-
-                                    }
-
-                                } else {
-
-                                    $auto_debit_status_label = 'Pending';
-
-                                }
-
-                            }
-
-                        }
-
-                    }
-
-                    $month = $single['date'] != '' ? date('F-y', strtotime($single['date'])) : '--';
-                    $due_date = $single['due_date'] != '' ? date('d-m-Y F', strtotime($single['due_date'])) : '--';
-
-                    $auto_debit_status_html = '';
-                    if ($auto_debit_status_label === 'Confirmed') {
-                        $auto_debit_status_html = '<span class="badge bg-success">Confirmed</span>';
-                    } else {
-                        $auto_debit_status_html = '<span class="badge bg-warning text-dark">' . $auto_debit_status_label . '</span>';
-                    }
-                    
-                    $action_date_html = '';
-                    if ($auto_debit_status_label === 'Confirmed' || $paid > 0) {
-                        $p_date = !empty($single['payment_date']) ? date('d-m-Y', strtotime($single['payment_date'])) : '';
-                        $action_date_html = '<span class="text-success font-weight-bold"><i class="fa fa-check-circle"></i> Confirmed<br><small>' . $p_date . '</small></span>';
-                    } else {
-                        if ($renewalMethod === 'ADMIN') {
-                            $action_date_html = 'Admin Renew';
-                        } else {
-                            $action_date_html = '<span class="text-muted">Auto Debit</span>';
-                        }
-                    }
-
-                    $row = array('month' => $month,
-                        'outstanding' => round($outstanding, 2),
-                        'gto' => round($single['turnover'], 2),
-                        'acc_fees' => round($acc_fees, 2),
-                        'penalty' => round($penalty, 2),
-                        'total' => round($total, 2),
-                        'paid' => round($paid, 2),
-                        'balance' => round($balance, 2),
-                        'due_date' => $due_date,
-                        'due_days' => $days,
-                        'auto_debit_status_label' => $auto_debit_status_html,
-                        'action_date' => $action_date_html
-                    );
-
-                    $report[] = $row;
-                }
-                $row = array(
-                    'month' => 'Total',
-                    'outstanding' => 0,
-                    'gto' => round($total_turnover, 2),
-                    'acc_fees' => round($total_fees, 2),
-                    'penalty' => round($total_penalty, 2),
-                    'total' => round($total_sum, 2), // Use sum of all row totals instead of calculation
-                    'paid' => round($total_paid, 2),
-                    'balance' => 0,
-                    'due_date' => '',
-                    'due_days' => $total_days,
-                    'auto_debit_status' => '',
-                    'action_date' => ''
-                );
-
-                $report[] = $row;
-                $data['report'] = $report;
-                $data['package'] = $package;
-                $this->template->load('reports', 'accountancy', $data);
-            } else {
-                $this->session->set_flashdata('err_msg', 'No Data Found!');
-                redirect($_SERVER['HTTP_REFERER']);
-            }
-        } else {
-            $this->session->set_flashdata('err_msg', 'Package not Active!');
-            redirect($_SERVER['HTTP_REFERER']);
+        $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
+        if (!$acc_data['status']) {
+            $this->session->set_flashdata('err_msg', $acc_data['message']);
+            redirect($acc_data['redirect'] ?? ($_SERVER['HTTP_REFERER'] ?? 'home/'));
+            return;
         }
+
+        // On this page, Accounting Mode displays ONLY three columns:
+        // Month, GTO, Accounts Fee
+        // All underlying business logic, calculations, and data are preserved.
+        $report = array();
+        foreach ($acc_data['records'] as $record) {
+            $report[] = array(
+                'month' => $record['month'],
+                'gto' => $record['gto'],
+                'acc_fees' => $record['acc_fees'],
+                'outstanding' => $record['outstanding'],
+                'penalty' => $record['penalty'],
+                'total' => $record['total'],
+                'paid' => $record['paid'],
+                'balance' => $record['balance'],
+                'due_date' => $record['due_date'],
+                'due_days' => $record['days'],
+                'auto_debit_status_label' => $record['auto_debit_status_label'],
+                'action_date' => $record['action_date']
+            );
+        }
+
+        // Total row for the 3 columns
+        $report[] = array(
+            'month' => 'Total',
+            'gto' => round($acc_data['total_turnover'], 2),
+            'acc_fees' => round($acc_data['total_fees'], 2),
+            'outstanding' => 0,
+            'penalty' => round($acc_data['total_penalty'], 2),
+            'total' => round($acc_data['total_sum'], 2),
+            'paid' => round($acc_data['total_paid'], 2),
+            'balance' => 0,
+            'due_date' => '',
+            'due_days' => $acc_data['total_days'],
+            'auto_debit_status' => '',
+            'action_date' => ''
+        );
+
+        $data['report'] = $report;
+        $data['package'] = $acc_data['package'];
+        $data['last_month_balance'] = $acc_data['last_month_balance'];
+        $data['payment_month_range'] = $acc_data['payment_month_range'];
+        $data['last_month_name'] = !empty($acc_data['last_month_data']['month']) ? $acc_data['last_month_data']['month'] : '';
+
+        $this->template->load('reports', 'accountancy', $data);
     }
 
     public function otherfee()
@@ -1428,8 +1471,6 @@ class Reports extends CI_Controller
                         if (!in_array($service_id, $current_service_ids, true)) {
                             if (!isset($renewal_services[$service_id])) {
                                 // Get service details
-                                // Note: Currently shows all services (web + app). 
-                                // If filtering by platform is needed, add platform field check here.
                                 $service = $this->master->getservices(array('id' => $service_id, 'status' => 1), 'single');
                                 if (!empty($service)) {
                                     $renewal_services[$service_id] = array(
@@ -1536,220 +1577,14 @@ class Reports extends CI_Controller
             return;
         }
 
-        $yearval = getyearmonthvalues($year);
-        $year1 = $yearval['year1'];
-        $year2 = $yearval['year2'];
-        $from = "$year1-04-01";
-        $to = "$year2-03-31";
-
-        // Check package type first - Accounting Pay is only for Turnover type packages
-        $where = array('user_id' => $user_id, 'status' => 1);
-        $query = $this->db->get_where('customer_packages', $where);
-        if ($query->num_rows() > 0) {
-            $cpackage = $query->unbuffered_row('array');
-            $pkg_type = !empty($cpackage['package_type']) ? $cpackage['package_type'] : 'Turnover';
-
-            // Accounting Pay is only for Turnover type packages
-            // Monthly type packages don't use turnover-based payment calculation
-            if ($pkg_type == 'Monthly') {
-                $this->session->set_flashdata('err_msg', 'Accounting Pay is not applicable for Monthly Account Work packages.');
-                redirect('reports/');
-                return;
-            }
-        }
-
-        $user_id_escaped = $this->db->escape($user_id);
-        $firm_id_escaped = $this->db->escape($firm_id);
-        $from_escaped = $this->db->escape($from);
-        $to_escaped = $this->db->escape($to);
-        $where2 = "t1.user_id={$user_id_escaped} AND t1.firm_id={$firm_id_escaped} AND t1.date>={$from_escaped} AND t1.date<={$to_escaped}";
-
-        $accountancy = $this->service->getturnoverswithpayment($where2);
-
-        if (empty($accountancy)) {
-            $this->session->set_flashdata('err_msg', 'No Data Found!');
-            redirect('reports/');
-            return;
-        }
-        if ($query->num_rows() == 0) {
-            $this->session->set_flashdata('err_msg', 'Package not Active!');
+        $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
+        if (!$acc_data['status']) {
+            $this->session->set_flashdata('err_msg', $acc_data['message']);
             redirect('reports/');
             return;
         }
 
-        $cpackage = $query->unbuffered_row('array');
-        $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-        $package = $this->master->getpackages(['name' => $name], 'single');
-
-        $turnovers = !empty($accountancy) ? array_column($accountancy, 'turnover') : array(0);
-        $turnover = array_sum($turnovers);
-        $total_turnover = $turnover;
-
-        $date = date('Y-m-d');
-        $percent = 2 / 100;
-        $unpaid_months = array();
-        $total_balance = 0;
-        $total_fees = 0;
-        $total_penalty = 0;
-        $total_paid = 0;
-        $outstanding = $total = 0;
-
-        // Slab-based Prime plan fee, per updated remuneration table
-        if (isset($name) && $name === 'Accountancy Prime') {
-            $gto = $total_turnover / 100000;
-            if ($gto <= 0) {
-                $fees = 0;
-            } else if ($gto <= 25) {
-                $fees = 12000;
-            } else if ($gto <= 50) {
-                $fees = (20000 / 50) * $gto;
-            } else if ($gto <= 75) {
-                $fees = (25000 / 75) * $gto;
-            } else if ($gto <= 100) {
-                $fees = (30000 / 100) * $gto;
-            } else {
-                $fees = 30000 + (($gto - 100) * (10000 / 100));
-            }
-            $fees = round($fees, 2);
-        } else if (isset($name) && $name === 'Accountancy Premium') {
-            // Slab-based Premium plan fee, per updated remuneration table
-            $gto = $total_turnover / 100000;
-            if ($gto <= 0) {
-                $fees = 0;
-            } else if ($gto <= 25) {
-                $fees = 15000;
-            } else if ($gto <= 50) {
-                $fees = (24000 / 50) * $gto;
-            } else if ($gto <= 75) {
-                $fees = (30000 / 75) * $gto;
-            } else if ($gto <= 100) {
-                $fees = (36000 / 100) * $gto;
-            } else {
-                $fees = 36000 + (($gto - 100) * (15000 / 100));
-            }
-            $fees = round($fees, 2);
-        } else {
-            $fees = $total_turnover / $package['turnover'];
-            $fees *= $package['rate'];
-        }
-        $count = count($accountancy);
-
-        $last = end($accountancy);
-
-        if ($last['date'] == '') {
-
-            $count--;
-
-        }
-
-        $activeMonthsCount = 0;
-
-        foreach ($accountancy as $acct) {
-
-            if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-
-                $activeMonthsCount++;
-
-            }
-
-        }
-
-        $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-
-        $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-
-        foreach ($accountancy as $single) {
-
-            $days = $paid = $penalty = 0;
-
-            $paid = !empty($single['paid']) ? $single['paid'] : 0;
-
-            $outstanding = $total;
-
-            if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-
-                if (isset($single['turnover']) && $single['turnover'] > 0) {
-
-                    $acc_fees = $monthlyAccountsFee;
-
-                } else {
-
-                    $acc_fees = 0;
-
-                }
-
-            } else {
-
-                if ($single['date'] != '') {
-
-                    $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-                } else {
-
-                    $acc_fees = 0;
-
-                }
-
-            }
-            $other_fee = $single['other_fee'] ?? 0;
-            $balance = $outstanding + $acc_fees + $other_fee;
-
-            if ($single['due_date'] < $date && $paid < $balance) {
-                $balance -= $paid;
-                $date1 = new DateTime($single['due_date']);
-                $date2 = new DateTime($date);
-                $interval = $date1->diff($date2);
-                $days = $interval->days;
-                $penalty = ($percent * $balance);
-                if ($days < 30) {
-                    $penalty /= 30;
-                    $penalty *= $days;
-                }
-                $penalty = round($penalty);
-            } else {
-                $balance -= $paid;
-            }
-            $total = $balance + $penalty;
-
-            // Only include unpaid months
-            if ($balance > 0) {
-                $unpaid_months[] = array(
-                    'id' => $single['id'],
-                    'date' => $single['date'],
-                    'month' => $single['date'] != '' ? date('F-y', strtotime($single['date'])) : '--',
-                    'due_date' => $single['due_date'] != '' ? date('d-m-Y', strtotime($single['due_date'])) : '--',
-                    'outstanding' => $outstanding,
-                    'acc_fees' => $acc_fees,
-                    'penalty' => $penalty,
-                    'balance' => $balance,
-                    'total' => $total,
-                    'days' => $days
-                );
-                $total_balance += $balance;
-                $total_fees += $acc_fees;
-                $total_penalty += $penalty;
-            }
-            $total_paid += $paid;
-        }
-
-        // Get only the last month's balance for payment
-        $last_month_balance = 0;
-        $last_month_data = null;
-        $first_month_data = null;
-        $payment_month_range = '';
-        if (!empty($unpaid_months)) {
-            $first_month_data = reset($unpaid_months);
-            $last_month_data = end($unpaid_months);
-            $last_month_balance = $last_month_data['balance'];
-
-            // Create payment month range (FirstMonth-LastMonth)
-            if (count($unpaid_months) > 1) {
-                $payment_month_range = $first_month_data['month'] . '-' . $last_month_data['month'];
-            } else {
-                $payment_month_range = $last_month_data['month'];
-            }
-        }
+        $last_month_balance = $acc_data['last_month_balance'];
 
         // Check customer GST setting and calculate GST if enabled
         $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
@@ -1787,7 +1622,6 @@ class Reports extends CI_Controller
                 // Same state: SGST 9% + CGST 9% = 18%
                 $sgst_amount = round(($last_month_balance * 9) / 100, 2);
                 $cgst_amount = round(($last_month_balance * 9) / 100, 2);
-                // Adjust for rounding differences
                 $total_gst = round($sgst_amount + $cgst_amount, 2);
                 if (abs($total_gst - $gst_amount) > 0.01) {
                     $diff = round($gst_amount - $total_gst, 2);
@@ -1803,13 +1637,19 @@ class Reports extends CI_Controller
             $igst_amount = $gst_amount;
         }
 
-        $data['unpaid_months'] = $unpaid_months;
-        $data['total_balance'] = $total_balance;
+        $data['payment_records'] = $acc_data['records'];
+        $data['unpaid_months'] = $acc_data['unpaid_months'];
+        $data['total_balance'] = $acc_data['total_balance'];
+        $data['total_fees'] = $acc_data['total_fees'];
+        $data['total_penalty'] = $acc_data['total_penalty'];
+        $data['total_sum'] = $acc_data['total_sum'];
+        $data['total_paid'] = $acc_data['total_paid'];
+        $data['total_days'] = $acc_data['total_days'];
         $data['last_month_balance'] = $last_month_balance;
-        $data['last_month_data'] = $last_month_data;
-        $data['first_month_data'] = $first_month_data;
-        $data['payment_month_range'] = $payment_month_range;
-        $data['package'] = $package;
+        $data['last_month_data'] = $acc_data['last_month_data'];
+        $data['first_month_data'] = $acc_data['first_month_data'];
+        $data['payment_month_range'] = $acc_data['payment_month_range'];
+        $data['package'] = $acc_data['package'];
         $data['year'] = $year;
         $data['firm_id'] = $firm_id;
         $data['user_id'] = $user_id;
@@ -1821,6 +1661,32 @@ class Reports extends CI_Controller
         $data['cgst_amount'] = $cgst_amount;
         $data['igst_amount'] = $igst_amount;
         $data['states_match'] = $states_match;
+
+        // Fetch other fee (non-accountancy purchases) grouped by month for payment page
+        $years_data = getyearmonthvalues($year);
+        $purchases_where = array(
+            't1.user_id' => $user_id,
+            't1.firm_id' => $firm_id,
+            't1.date>='  => $years_data['year1'] . '-04-01',
+            't1.date<='  => $years_data['year2'] . '-03-31'
+        );
+        $other_purchases_db = $this->service->getpurchases($purchases_where);
+        $other_fee_by_month = array();
+        $total_other_fee = 0;
+        if (!empty($other_purchases_db)) {
+            foreach ($other_purchases_db as $p) {
+                if ((string)$p['service_id'] === '1') continue; // Skip accountancy service
+                $ym = !empty($p['date']) ? date('Y-m', strtotime($p['date'])) : '';
+                if (empty($ym)) continue;
+                if (!isset($other_fee_by_month[$ym])) {
+                    $other_fee_by_month[$ym] = 0;
+                }
+                $other_fee_by_month[$ym] += round(floatval($p['amount']), 2);
+                $total_other_fee += round(floatval($p['amount']), 2);
+            }
+        }
+        $data['other_fee_by_month'] = $other_fee_by_month;
+        $data['total_other_fee'] = round($total_other_fee, 2);
 
         $this->template->load('reports', 'payment', $data);
     }
@@ -1841,209 +1707,28 @@ class Reports extends CI_Controller
                 return;
             }
 
-            // Get unpaid months data
-            $yearval = getyearmonthvalues($year);
-            $year1 = $yearval['year1'];
-            $year2 = $yearval['year2'];
-            $from = "$year1-04-01";
-            $to = "$year2-03-31";
-
-            $user_id_escaped = $this->db->escape($user_id);
-            $firm_id_escaped = $this->db->escape($firm_id);
-            $from_escaped = $this->db->escape($from);
-            $to_escaped = $this->db->escape($to);
-            $where2 = "t1.user_id={$user_id_escaped} AND t1.firm_id={$firm_id_escaped} AND t1.date>={$from_escaped} AND t1.date<={$to_escaped}";
-
-            $accountancy = $this->service->getturnoverswithpayment($where2);
-
-            if (empty($accountancy)) {
-                $this->session->set_flashdata('err_msg', 'No Data Found!');
+            $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
+            if (!$acc_data['status']) {
+                $this->session->set_flashdata('err_msg', $acc_data['message']);
                 redirect('reports/payment/');
                 return;
             }
 
-            $where = array('user_id' => $user_id, 'status' => 1);
-            $query = $this->db->get_where('customer_packages', $where);
-            if ($query->num_rows() == 0) {
-                $this->session->set_flashdata('err_msg', 'Package not Active!');
-                redirect('reports/');
+            $unpaid_months = $acc_data['unpaid_months'];
+            $last_month_balance = $acc_data['last_month_balance'];
+            $last_month_data = $acc_data['last_month_data'];
+
+            if (empty($unpaid_months) || $last_month_balance <= 0) {
+                $this->session->set_flashdata('err_msg', 'No unpaid month found!');
+                redirect('reports/payment/');
                 return;
-            }
-
-            $cpackage = $query->unbuffered_row('array');
-            $pkg_type = !empty($cpackage['package_type']) ? $cpackage['package_type'] : 'Turnover';
-
-            // Accounting Pay is only for Turnover type packages
-            // Monthly type packages don't use turnover-based payment system
-            if ($pkg_type == 'Monthly') {
-                $this->session->set_flashdata('err_msg', 'Accounting Pay is not available for Monthly type packages. Monthly packages are auto-debited based on the fixed amount.');
-                redirect('package/');
-                return;
-            }
-
-            $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-            $package = $this->master->getpackages(['name' => $name], 'single');
-
-            $turnovers = !empty($accountancy) ? array_column($accountancy, 'turnover') : array(0);
-            $turnover = array_sum($turnovers);
-            $total_turnover = $turnover;
-
-            $date = date('Y-m-d');
-            $percent = 2 / 100;
-            $unpaid_months = array();
-            $total_balance = 0;
-            $total_fees = 0;
-            $total_penalty = 0;
-            $outstanding = $total = 0;
-
-            // Slab-based Prime plan fee, per updated remuneration table
-            if (isset($name) && $name === 'Accountancy Prime') {
-                $gto = $total_turnover / 100000;
-                if ($gto <= 0) {
-                    $fees = 0;
-                } else if ($gto <= 25) {
-                    $fees = 12000;
-                } else if ($gto <= 50) {
-                    $fees = (20000 / 50) * $gto;
-                } else if ($gto <= 75) {
-                    $fees = (25000 / 75) * $gto;
-                } else if ($gto <= 100) {
-                    $fees = (30000 / 100) * $gto;
-                } else {
-                    $fees = 30000 + (($gto - 100) * (10000 / 100));
-                }
-                $fees = round($fees, 2);
-            } else if (isset($name) && $name === 'Accountancy Premium') {
-                // Slab-based Premium plan fee, per updated remuneration table
-                $gto = $total_turnover / 100000;
-                if ($gto <= 0) {
-                    $fees = 0;
-                } else if ($gto <= 25) {
-                    $fees = 15000;
-                } else if ($gto <= 50) {
-                    $fees = (24000 / 50) * $gto;
-                } else if ($gto <= 75) {
-                    $fees = (30000 / 75) * $gto;
-                } else if ($gto <= 100) {
-                    $fees = (36000 / 100) * $gto;
-                } else {
-                    $fees = 36000 + (($gto - 100) * (15000 / 100));
-                }
-                $fees = round($fees, 2);
-            } else {
-                $fees = $total_turnover / $package['turnover'];
-                $fees *= $package['rate'];
-            }
-            $count = count($accountancy);
-
-            $last = end($accountancy);
-
-            if ($last['date'] == '') {
-
-                $count--;
-
-            }
-
-            $activeMonthsCount = 0;
-
-            foreach ($accountancy as $acct) {
-
-                if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-
-                    $activeMonthsCount++;
-
-                }
-
-            }
-
-            $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-
-            $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-
-            foreach ($accountancy as $single) {
-
-                $days = $paid = $penalty = 0;
-
-                $paid = !empty($single['paid']) ? $single['paid'] : 0;
-
-                $outstanding = $total;
-
-                if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-
-                    if (isset($single['turnover']) && $single['turnover'] > 0) {
-
-                        $acc_fees = $monthlyAccountsFee;
-
-                    } else {
-
-                        $acc_fees = 0;
-
-                    }
-
-                } else {
-
-                    if ($single['date'] != '') {
-
-                        $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-                    } else {
-
-                        $acc_fees = 0;
-
-                    }
-
-                }
-                $other_fee = $single['other_fee'] ?? 0;
-                $balance = $outstanding + $acc_fees + $other_fee;
-
-                if ($single['due_date'] < $date && $paid < $balance) {
-                    $balance -= $paid;
-                    $date1 = new DateTime($single['due_date']);
-                    $date2 = new DateTime($date);
-                    $interval = $date1->diff($date2);
-                    $days = $interval->days;
-                    $penalty = ($percent * $balance);
-                    if ($days < 30) {
-                        $penalty /= 30;
-                        $penalty *= $days;
-                    }
-                    $penalty = round($penalty);
-                } else {
-                    $balance -= $paid;
-                }
-                $total = $balance + $penalty;
-
-                if ($balance > 0) {
-                    $unpaid_months[] = array(
-                        'id' => $single['id'],
-                        'date' => $single['date'],
-                        'due_date' => $single['due_date'],
-                        'balance' => $balance,
-                        'total' => $total,
-                        'acc_fees' => $acc_fees,
-                        'penalty' => $penalty,
-                        'outstanding' => $outstanding
-                    );
-                    $total_balance += $balance;
-                    $total_fees += $acc_fees;
-                    $total_penalty += $penalty;
-                }
-            }
-
-            // Get only the last month's balance for validation
-            $last_month_balance = 0;
-            $last_month_data = null;
-            if (!empty($unpaid_months)) {
-                $last_month_data = end($unpaid_months);
-                $last_month_balance = $last_month_data['balance'];
             }
 
             // Check customer GST setting to validate payment amount
             $customer_check = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
             $gst_enabled_check = !empty($customer_check) && !empty($customer_check['gst_enabled']) && $customer_check['gst_enabled'] == 1;
             $gst_amount_check = $gst_enabled_check ? round(($last_month_balance * 18) / 100, 2) : 0;
-            $expected_total = $last_month_balance + $gst_amount_check;
+            $expected_total = round($last_month_balance + $gst_amount_check, 2);
 
             if (abs($amount - $expected_total) > 0.01) {
                 $this->session->set_flashdata('err_msg', 'Payment amount does not match the expected total! Expected: ₹' . number_format($expected_total, 2) . ($gst_enabled_check ? ' (including GST)' : ''));
@@ -2071,69 +1756,51 @@ class Reports extends CI_Controller
             }
 
             // Process payment for ALL unpaid months (from first to last)
+            $payment_success = true;
+            $payment_errors = array();
+            $previous_balance = 0;
 
-            if (!empty($unpaid_months)) {
-                $payment_success = true;
-                $payment_errors = array();
-                $previous_balance = 0;
+            foreach ($unpaid_months as $month_data) {
+                $month_payment_amount = $month_data['balance'] - $previous_balance;
 
-                // Process payment for each unpaid month
-                // Calculate the incremental amount for each month (current balance - previous balance)
-                // This ensures we only pay the amount for each month, not the cumulative total
-                foreach ($unpaid_months as $month_data) {
-                    // Calculate this month's incremental payment amount
-                    // Current balance minus previous balance = this month's accounts fee + penalty
-                    $month_payment_amount = $month_data['balance'] - $previous_balance;
+                if ($month_payment_amount <= 0) {
+                    continue;
+                }
 
-                    // Skip if amount is zero or negative (shouldn't happen, but safety check)
-                    if ($month_payment_amount <= 0) {
-                        continue;
-                    }
+                $previous_balance = $month_data['balance'];
 
-                    // Update previous balance for next iteration
-                    $previous_balance = $month_data['balance'];
-
-                    // Convert due_date from d-m-Y format to Y-m-d format for database
-                    $payment_date = date('Y-m-d');
-                    if (!empty($month_data['due_date']) && $month_data['due_date'] != '--') {
-                        // due_date is in d-m-Y format, convert to Y-m-d
-                        $due_date_parts = explode('-', $month_data['due_date']);
-                        if (count($due_date_parts) == 3) {
-                            $payment_date = $due_date_parts[2] . '-' . $due_date_parts[1] . '-' . $due_date_parts[0];
-                        }
-                    }
-
-                    // Ensure acc_date is in correct format (should already be Y-m-d from database)
-                    $acc_date = !empty($month_data['date']) ? $month_data['date'] : date('Y-m-d');
-
-                    // Calculate GST for this month's payment if enabled (use customer_check defined earlier)
-                    $month_gst = $gst_enabled_check ? round(($month_payment_amount * 18) / 100, 2) : 0;
-                    $month_total = round($month_payment_amount + $month_gst, 2);
-
-                    $payment_data = array(
-                        'user_id' => $user_id,
-                        'firm_id' => $firm_id,
-                        'year' => $year,
-                        'acc_date' => $acc_date,
-                        'date' => $payment_date,
-                        'amount' => $month_total, // Include GST in payment amount
-                        'added_by' => $user['id']
-                    );
-
-                    $result = $this->wallet->makeaccountancypayment($payment_data);
-                    if ($result['status'] !== true) {
-                        $payment_success = false;
-                        $payment_errors[] = $result['message'] . ' (Month: ' . (!empty($month_data['date']) ? date('F Y', strtotime($month_data['date'])) : 'N/A') . ', Amount: ₹' . number_format($month_payment_amount, 2) . ')';
+                $payment_date = date('Y-m-d');
+                if (!empty($month_data['due_date']) && $month_data['due_date'] != '--') {
+                    $due_date_parts = explode('-', $month_data['due_date']);
+                    if (count($due_date_parts) == 3) {
+                        $payment_date = $due_date_parts[2] . '-' . $due_date_parts[1] . '-' . $due_date_parts[0];
                     }
                 }
 
-                if (!$payment_success) {
-                    $this->session->set_flashdata('err_msg', 'Payment partially failed: ' . implode(', ', $payment_errors));
-                    redirect('reports/payment/');
-                    return;
+                $acc_date = !empty($month_data['date']) ? $month_data['date'] : date('Y-m-d');
+
+                $month_gst = $gst_enabled_check ? round(($month_payment_amount * 18) / 100, 2) : 0;
+                $month_total = round($month_payment_amount + $month_gst, 2);
+
+                $payment_data = array(
+                    'user_id' => $user_id,
+                    'firm_id' => $firm_id,
+                    'year' => $year,
+                    'acc_date' => $acc_date,
+                    'date' => $payment_date,
+                    'amount' => $month_total,
+                    'added_by' => $user['id']
+                );
+
+                $result = $this->wallet->makeaccountancypayment($payment_data);
+                if ($result['status'] !== true) {
+                    $payment_success = false;
+                    $payment_errors[] = $result['message'] . ' (Month: ' . (!empty($month_data['date']) ? date('F Y', strtotime($month_data['date'])) : 'N/A') . ', Amount: ₹' . number_format($month_payment_amount, 2) . ')';
                 }
-            } else {
-                $this->session->set_flashdata('err_msg', 'No unpaid month found!');
+            }
+
+            if (!$payment_success) {
+                $this->session->set_flashdata('err_msg', 'Payment partially failed: ' . implode(', ', $payment_errors));
                 redirect('reports/payment/');
                 return;
             }
@@ -2143,25 +1810,19 @@ class Reports extends CI_Controller
             $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
             $firm = $this->db->get_where('firms', ['id' => $firm_id])->row_array();
 
-            // Check if GST is enabled for this customer
             $gst_enabled = !empty($customer) && !empty($customer['gst_enabled']) && $customer['gst_enabled'] == 1;
-
-            // Calculate GST - last_month_balance is base rate, GST is added on top
-            $subtotal = $last_month_balance; // Base rate
+            $subtotal = $last_month_balance;
             $gst_rate = $gst_enabled ? 18.0 : 0.0;
-            $gst_amount = $gst_enabled ? round(($last_month_balance * $gst_rate) / 100, 2) : 0; // 18% of base rate
-            $total_amount = $subtotal + $gst_amount; // Total = base + GST
+            $gst_amount = $gst_enabled ? round(($last_month_balance * $gst_rate) / 100, 2) : 0;
+            $total_amount = $subtotal + $gst_amount;
 
-            // Generate invoice for the payment - show period range from first to last unpaid month
             $this->load->model('Invoice_model', 'invoice');
 
-            // Get first and last unpaid months for period display
             $period_value = '';
             if (!empty($unpaid_months)) {
                 $first_month = reset($unpaid_months);
                 $last_month = end($unpaid_months);
 
-                // Format: april-25/july-25 (first month/last month) - lowercase month name
                 $first_month_name = !empty($first_month['date']) ? strtolower(date('F-y', strtotime($first_month['date']))) : '';
                 $last_month_name = !empty($last_month['date']) ? strtolower(date('F-y', strtotime($last_month['date']))) : '';
 

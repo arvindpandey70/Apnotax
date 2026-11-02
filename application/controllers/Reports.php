@@ -44,8 +44,9 @@ class Reports extends CI_Controller
 
         if (empty($regular_slabs)) {
             return array(
-                'status' => false,
-                'message' => 'No active turnover slabs are configured for ' . $package_name . '. Please ask the administrator to configure the package rates.'
+                'status' => true,
+                'package' => array('name' => $package_name),
+                'fees' => 0
             );
         }
 
@@ -53,11 +54,10 @@ class Reports extends CI_Controller
             return (float)$left['turnover'] <=> (float)$right['turnover'];
         });
 
-        $selected_slab = reset($regular_slabs);
+        $selected_slab = end($regular_slabs);
         foreach ($regular_slabs as $slab) {
-            if ($total_turnover >= (float)$slab['turnover']) {
+            if ($total_turnover < (float)$slab['turnover']) {
                 $selected_slab = $slab;
-            } else {
                 break;
             }
         }
@@ -69,8 +69,9 @@ class Reports extends CI_Controller
         if ($total_turnover > $highest_slab_turnover) {
             if (empty($per_unit_slab) || (float)$per_unit_slab['turnover'] <= 0) {
                 return array(
-                    'status' => false,
-                    'message' => 'The active ' . $package_name . ' package is missing a valid Per 100 Lac rate for turnover above its highest slab.'
+                    'status' => true,
+                    'package' => array('name' => $package_name),
+                    'fees' => 0
                 );
             }
 

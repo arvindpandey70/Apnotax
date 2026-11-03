@@ -253,18 +253,20 @@ class Reports extends CI_Controller
                 $single_date = !empty($single['date']) ? $single['date'] : '';
                 $ym = !empty($single_date) ? date('Y-m', strtotime($single_date)) : '';
 
-                // Package fee for this month is strictly the single month rate
-                $acc_fees = $monthly_single_rate;
-                $total_fees += $acc_fees;
-
-                $outstanding = $balance;
-                $other_fee = (float)($single['other_fee'] ?? 0);
+                // Accounting Fee is strictly for turnover-based packages.
+                // For Monthly package, the monthly fee is shown in Other Fee!
+                $acc_fees = 0;
+                $other_fee = $monthly_single_rate;
                 $total_other += $other_fee;
 
                 $gross_total = round($outstanding + $acc_fees + $other_fee, 2);
 
                 // Check payment from acc_payment, purchases, or customer_packages
                 $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
+                // In monthly package, paid amount for this month should not exceed the package rate (ignores old turnover payments)
+                if ($paid > $other_fee) {
+                    $paid = $other_fee;
+                }
                 $payment_date = !empty($single['payment_date']) ? $single['payment_date'] : null;
 
                 if ($paid <= 0 && !empty($ym) && isset($purchases_by_ym[$ym])) {
@@ -275,11 +277,15 @@ class Reports extends CI_Controller
                 }
 
                 if ($paid <= 0 && !empty($ym) && isset($monthly_pkgs_by_ym[$ym])) {
-                    $is_pkg_paid = !empty($monthly_pkgs_by_ym[$ym]['payment_status']) || ($monthly_pkgs_by_ym[$ym]['auto_debit_status'] ?? '') === 'Confirmed';
+                    $is_pkg_paid = !empty($monthly_pkgs_by_ym[$ym]['payment_status']) || ($monthly_pkgs_by_ym[$ym]['auto_debit_status'] ?? '') === 'Confirmed' || ($single['auto_debit_status'] ?? '') === 'Confirmed';
                     if ($is_pkg_paid) {
-                        $paid = $acc_fees;
+                        $paid = $other_fee;
                         $payment_date = !empty($monthly_pkgs_by_ym[$ym]['updated_on']) ? $monthly_pkgs_by_ym[$ym]['updated_on'] : (!empty($monthly_pkgs_by_ym[$ym]['purchase_date']) ? $monthly_pkgs_by_ym[$ym]['purchase_date'] : null);
                     }
+                }
+
+                if ($paid > $other_fee) {
+                    $paid = $other_fee;
                 }
 
                 // Due date
@@ -366,6 +372,7 @@ class Reports extends CI_Controller
                     'outstanding'             => round($outstanding, 2),
                     'gto'                     => 0,
                     'acc_fees'                => round($acc_fees, 2),
+                    'other_fee'               => round($other_fee, 2),
                     'penalty'                 => round($penalty, 2),
                     'display_penalty'         => $display_penalty,
                     'gross_total'             => round($gross_total + $penalty, 2),
@@ -1952,7 +1959,7 @@ class Reports extends CI_Controller
         $unpaid_fees_subtotal = 0;
         if (!empty($unpaid_months)) {
             foreach ($unpaid_months as $um) {
-                $unpaid_fees_subtotal += (float)($um['acc_fees'] ?? 0);
+                $unpaid_fees_subtotal += ((float)($um['acc_fees'] ?? 0) + (float)($um['other_fee'] ?? 0));
             }
         } else {
             $unpaid_fees_subtotal = $last_month_balance;
@@ -2013,6 +2020,7 @@ class Reports extends CI_Controller
         $data['unpaid_months'] = $acc_data['unpaid_months'];
         $data['total_balance'] = $acc_data['total_balance'];
         $data['total_fees'] = $acc_data['total_fees'];
+        $data['total_other'] = $acc_data['total_other'];
         $data['total_penalty'] = $acc_data['total_penalty'];
         $data['total_sum'] = $acc_data['total_sum'];
         $data['total_paid'] = $acc_data['total_paid'];
@@ -2100,7 +2108,7 @@ class Reports extends CI_Controller
             $unpaid_fees_subtotal = 0;
             if (!empty($unpaid_months)) {
                 foreach ($unpaid_months as $um) {
-                    $unpaid_fees_subtotal += (float)($um['acc_fees'] ?? 0);
+                    $unpaid_fees_subtotal += ((float)($um['acc_fees'] ?? 0) + (float)($um['other_fee'] ?? 0));
                 }
             } else {
                 $unpaid_fees_subtotal = $last_month_balance;
@@ -2161,7 +2169,7 @@ class Reports extends CI_Controller
 
                 $acc_date = !empty($month_data['date']) ? $month_data['date'] : date('Y-m-d');
 
-                $month_fee = (float)($month_data['acc_fees'] ?? 0);
+                $month_fee = (float)($month_data['acc_fees'] ?? 0) + (float)($month_data['other_fee'] ?? 0);
                 $month_gst = $gst_enabled_check ? round(($month_fee * 18) / 100, 2) : 0;
                 $month_total = round($month_payment_amount + $month_gst, 2);
 

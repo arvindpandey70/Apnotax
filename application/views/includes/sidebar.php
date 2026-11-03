@@ -197,23 +197,27 @@
                         <ul class="slide-menu">
                             <li class="side-menu-label1"><a href="javascript:void(0)">Fee Report</a></li>
                             <li>
-                                <?php if ($is_monthly_type) : ?>
-                                    <a href="javascript:void(0);" class="slide-item text-muted" style="opacity: 0.5; cursor: not-allowed;" onclick="alert('Accounting Fee is not available for Monthly type packages. Monthly packages are auto-debited based on the fixed amount.'); return false;" title="Not available for Monthly type packages">
-                                        <i class="fe fe-lock me-1"></i> Accounting Fee
-                                    </a>
-                                <?php else : ?>
+                                
+                                    
+                                        
+
+                                
+                                <?php if ($is_monthly_type) { ?>
+                                    <a href="javascript:void(0)" onclick="alert('Accounting Fee is not available for Monthly type packages. Please check Accounting Pay.');" class="slide-item text-muted" style="cursor: not-allowed; opacity: 0.6;"><i class="fa fa-lock text-warning me-1"></i> Accounting Fee</a>
+                                <?php } else { ?>
                                     <a href="<?= base_url('reports/'); ?>" class="slide-item <?= activate_menu('reports'); ?>"> Accounting Fee</a>
-                                <?php endif; ?>
+                                <?php } ?>
+                                
                             </li>
                             <li><a href="<?= base_url('reports/otherfee/'); ?>" class="slide-item <?= activate_menu('reports/otherfee'); ?>"> Other Fee</a></li>
                             <li>
-                                <?php if ($is_monthly_type) : ?>
-                                    <a href="javascript:void(0);" class="slide-item text-muted" style="opacity: 0.5; cursor: not-allowed;" onclick="alert('Accounting Pay is not available for Monthly type packages. Monthly packages are auto-debited based on the fixed amount.'); return false;" title="Not available for Monthly type packages">
-                                        <i class="fe fe-lock me-1"></i> Accounting Pay
-                                    </a>
-                                <?php else : ?>
+                                
+                                    
+                                        
+
+                                
                                     <a href="<?= base_url('reports/payment/'); ?>" class="slide-item <?= activate_menu('reports/payment'); ?>"> Accounting Pay</a>
-                                <?php endif; ?>
+                                
                             </li>
                         </ul>
                     </li>
@@ -236,7 +240,7 @@
                                         }
                                         ?>
                                         <span class="side-menu__label"><?= $menu['title']; ?></span>
-                                    </a>
+
                                 </li>
                             <?php
                             } else {

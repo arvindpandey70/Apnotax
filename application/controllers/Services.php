@@ -262,10 +262,51 @@ class Services extends CI_Controller
         if (!empty($all_user_pkgs)) {
             foreach ($all_user_pkgs as $_pkg) {
                 $exp       = !empty($_pkg['expiry_date']) ? strtotime($_pkg['expiry_date']) : 0;
-                $is_unpaid = empty($_pkg['payment_status']) || $_pkg['payment_status'] == 0 || ($_pkg['auto_debit_status'] ?? '') === 'Pending';
+                $is_unpaid = empty($_pkg['payment_status']) || $_pkg['payment_status'] == 0 || ($_pkg['auto_debit_status'] ?? '') === 'Pending'; $is_exp = $is_unpaid; if (false) {
+                // Check acc_payment or purchases for payments recorded from Accounting Pay
+                if ($is_unpaid && ($_acpkg['package_type'] ?? '') === 'Monthly') {
+                    $m_date = !empty($_acpkg['purchase_date']) ? $_acpkg['purchase_date'] : '';
+                    if (empty($m_date) && !empty($_acpkg['expiry_date'])) {
+                        $m_date = date('Y-m-01', strtotime('-1 month', strtotime($_acpkg['expiry_date'])));
+                    }
+                    if (!empty($m_date)) {
+                        $m_month = (int)date('m', strtotime($m_date));
+                        $m_year  = (int)date('Y', strtotime($m_date));
+
+                        // 1. Check acc_payment table
+                        $acc_pay = $this->db->query(
+                            "SELECT id, amount FROM " . $this->db->dbprefix('acc_payment') . " 
+                             WHERE user_id = ? AND firm_id = ? AND MONTH(acc_date) = ? AND YEAR(acc_date) = ? LIMIT 1",
+                            [$user['id'], $firm_id, $m_month, $m_year]
+                        )->row_array();
+
+                        // 2. Check purchases table (service_id = 1)
+                        if (empty($acc_pay)) {
+                            $acc_pay = $this->db->query(
+                                "SELECT id, amount FROM " . $this->db->dbprefix('purchases') . " 
+                                 WHERE user_id = ? AND firm_id = ? AND service_id = 1 AND MONTH(date) = ? AND YEAR(date) = ? LIMIT 1",
+                                [$user['id'], $firm_id, $m_month, $m_year]
+                            )->row_array();
+                        }
+
+                        if (!empty($acc_pay) && (float)$acc_pay['amount'] > 0) {
+                            $_acpkg['payment_status'] = 1;
+                            $_acpkg['auto_debit_status'] = 'Confirmed';
+                            $is_unpaid = false;
+
+                            // Sync customer_packages row in DB so it permanently reflects payment_status = 1
+                            $this->db->update('customer_packages', [
+                                'payment_status'    => 1,
+                                'auto_debit_status' => 'Confirmed',
+                                'updated_on'        => date('Y-m-d H:i:s')
+                            ], ['id' => $_acpkg['id']]);
+                        }
+                    }
+                }
+
                 $is_exp    = $is_unpaid;
 
-                // Resolve service names for display
+                } // Resolve service names for display
                 $svc_ids   = array_filter(array_map('trim', explode(',', $_pkg['service_ids'] ?? '')));
                 $svc_names = [];
                 foreach ($svc_ids as $_sid) {
@@ -298,6 +339,47 @@ class Services extends CI_Controller
             foreach ($account_work_pkgs as $_acpkg) {
                 $exp       = !empty($_acpkg['expiry_date']) ? strtotime($_acpkg['expiry_date']) : 0;
                 $is_unpaid = empty($_acpkg['payment_status']) || $_acpkg['payment_status'] == 0 || ($_acpkg['auto_debit_status'] ?? '') === 'Pending';
+                // Check acc_payment or purchases for payments recorded from Accounting Pay
+                if ($is_unpaid && ($_acpkg['package_type'] ?? '') === 'Monthly') {
+                    $m_date = !empty($_acpkg['purchase_date']) ? $_acpkg['purchase_date'] : '';
+                    if (empty($m_date) && !empty($_acpkg['expiry_date'])) {
+                        $m_date = date('Y-m-01', strtotime('-1 month', strtotime($_acpkg['expiry_date'])));
+                    }
+                    if (!empty($m_date)) {
+                        $m_month = (int)date('m', strtotime($m_date));
+                        $m_year  = (int)date('Y', strtotime($m_date));
+
+                        // 1. Check acc_payment table
+                        $acc_pay = $this->db->query(
+                            "SELECT id, amount FROM " . $this->db->dbprefix('acc_payment') . " 
+                             WHERE user_id = ? AND firm_id = ? AND MONTH(acc_date) = ? AND YEAR(acc_date) = ? LIMIT 1",
+                            [$user['id'], $firm_id, $m_month, $m_year]
+                        )->row_array();
+
+                        // 2. Check purchases table (service_id = 1)
+                        if (empty($acc_pay)) {
+                            $acc_pay = $this->db->query(
+                                "SELECT id, amount FROM " . $this->db->dbprefix('purchases') . " 
+                                 WHERE user_id = ? AND firm_id = ? AND service_id = 1 AND MONTH(date) = ? AND YEAR(date) = ? LIMIT 1",
+                                [$user['id'], $firm_id, $m_month, $m_year]
+                            )->row_array();
+                        }
+
+                        if (!empty($acc_pay) && (float)$acc_pay['amount'] > 0) {
+                            $_acpkg['payment_status'] = 1;
+                            $_acpkg['auto_debit_status'] = 'Confirmed';
+                            $is_unpaid = false;
+
+                            // Sync customer_packages row in DB so it permanently reflects payment_status = 1
+                            $this->db->update('customer_packages', [
+                                'payment_status'    => 1,
+                                'auto_debit_status' => 'Confirmed',
+                                'updated_on'        => date('Y-m-d H:i:s')
+                            ], ['id' => $_acpkg['id']]);
+                        }
+                    }
+                }
+
                 $is_exp    = $is_unpaid;
 
                 // For Turnover type, use service rate
@@ -325,7 +407,7 @@ class Services extends CI_Controller
             if (empty($pkgs)) return [];
             $grouped = [];
             foreach ($pkgs as $p) {
-                $key = ($p['package_type'] ?? '') . '_' . ($p['expiry_date'] ?? '');
+                $key = (($p['package_type'] ?? '') === 'Monthly' && !empty($p['purchase_date'])) ? 'Monthly_' . date('Y-m', strtotime($p['purchase_date'])) : (($p['package_type'] ?? '') . '_' . ($p['expiry_date'] ?? ''));
                 if (!isset($grouped[$key])) {
                     $grouped[$key] = $p;
                 } else {

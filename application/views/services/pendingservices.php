@@ -96,7 +96,7 @@ $credit_lim = isset($credit_limit) ? (float)$credit_limit : 0;
                     $edate = !empty($p['expiry_date']) ? strtotime($p['expiry_date']) : 0;
                     $pdate = !empty($p['purchase_date']) ? strtotime($p['purchase_date']) : 0;
                     if ($edate > 0) {
-                        return strtotime('-1 month', $edate);
+                        return ($pdate > 0) ? $pdate : strtotime('-1 month', $edate);
                     }
                     return $pdate;
                 }

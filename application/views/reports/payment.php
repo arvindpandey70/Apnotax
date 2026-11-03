@@ -51,14 +51,12 @@
                         </thead>
                         <tbody>
                             <?php foreach ($records_to_display as $month) {
-                                $month_balance = isset($month['balance']) ? (float)$month['balance'] : 0;
-                                $base_for_gst = max(0, $month_balance - $previous_unpaid_balance);
-                                if ($base_for_gst > 0) {
-                                    $previous_unpaid_balance = $month_balance;
-                                }
-                                $row_gst = $row_gst_rate > 0 ? round(($base_for_gst * $row_gst_rate) / 100, 2) : 0;
-                                $total_gst_col += $row_gst;
                                 $is_paid = ($month['balance'] <= 0 && $month['paid'] > 0);
+                                $row_fee = (float)($month['acc_fees'] ?? 0);
+                                $row_gst = ($row_gst_rate > 0 && !empty($gst_enabled) && $row_fee > 0) ? round(($row_fee * $row_gst_rate) / 100, 2) : 0;
+                                if (!$is_paid && $month['balance'] > 0) {
+                                    $total_gst_col += $row_gst;
+                                }
                                 // For display: use actual values for unpaid, display_ values for paid months
                                 $show_penalty = $is_paid ? ($month['display_penalty'] ?? $month['penalty']) : $month['penalty'];
                                 $show_days    = $is_paid ? ($month['display_days']   ?? $month['days'])    : ($month['days'] ?? $month['due_days'] ?? 0);
@@ -121,7 +119,7 @@
                                 <th class="cell-right"><?= !empty($total_other_fee) ? $this->amount->toDecimal($total_other_fee, false) : '--'; ?></th>
                                 <th class="cell-right"><?= isset($total_penalty) ? $this->amount->toDecimal($total_penalty, false) : '--'; ?></th>
                                 <th class="cell-right"><?= isset($total_sum) ? $this->amount->toDecimal($total_sum, false) : '--'; ?></th>
-                                <th class="cell-right"><?= $total_gst_col > 0 ? $this->amount->toDecimal($total_gst_col, false) : '--'; ?></th>
+                                <th class="cell-right"><?= !empty($gst_amount) ? $this->amount->toDecimal($gst_amount, false) : ($total_gst_col > 0 ? $this->amount->toDecimal($total_gst_col, false) : '--'); ?></th>
                                 <th class="cell-right">
                                     <?php if (isset($total_paid) && $total_paid > 0) { ?>
                                         <span class="badge bg-success"><?= $this->amount->toDecimal($total_paid, false); ?></span>

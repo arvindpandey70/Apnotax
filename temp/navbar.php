@@ -17,6 +17,8 @@ if (preg_match('#/(?:login|register|enterotp|forgotpassword|resetpassword)\.php$
    $navActive = 'employee_login';
 } elseif (preg_match('#about\.php$#i', $navPath)) {
    $navActive = 'about';
+} elseif (preg_match('#calculator\.php$#i', $navPath)) {
+   $navActive = 'calculator';
 } elseif (preg_match('#contact\.php$#i', $navPath)) {
    $navActive = 'contact';
 } elseif (preg_match('#(?:gst-accountancy|premium|prime)\.php$#i', $navPath)) {
@@ -107,6 +109,9 @@ if ($basePath === '.' || $basePath === '' || $basePath === '/') {
                      </ul>
                   </li>
                </ul>
+            </li>
+            <li class="nav-item">
+               <a class="nav-link <?php echo $navActive === 'calculator' ? 'active' : ''; ?>" <?php echo $navActive === 'calculator' ? 'aria-current="page"' : ''; ?> href="calculator.php">ACCOUNTING CALCULATOR</a>
             </li>
             <li class="nav-item">
                <a class="nav-link <?php echo $navActive === 'customer_login' ? 'active' : ''; ?>" <?php echo $navActive === 'customer_login' ? 'aria-current="page"' : ''; ?> href="login.php">CUSTOMER LOGIN</a>

@@ -31,6 +31,10 @@
                         $row_gst_rate = isset($gst_rate) ? floatval($gst_rate) : 18.0;
                         $total_gst_col = 0;
                         $previous_unpaid_balance = 0;
+                        $total_all_gst = 0;
+                        $total_all_sum = 0;
+                        $total_all_paid = 0;
+                        $total_all_balance = 0;
                         ?>
                         <thead>
                             <tr>
@@ -39,8 +43,8 @@
                                 <th class="cell-right">Accounts Fee</th>
                                 <th class="cell-right">Other Fee</th>
                                 <th class="cell-right">Late Fee</th>
-                                <th class="cell-right">Total</th>
                                 <th class="cell-right">GST</th>
+                                <th class="cell-right">Total</th>
                                 <th class="cell-right">Paid</th>
                                 <th class="cell-right">Balance</th>
                                 <th>Due Date</th>
@@ -51,8 +55,13 @@
                         </thead>
                         <tbody>
                             <?php foreach ($records_to_display as $month) {
-                                $is_paid = ($month['balance'] <= 0 && $month['paid'] > 0);
-                                $row_fee = (float)($month['acc_fees'] ?? 0);
+                                $is_paid = ($month['balance'] <= 0 && !empty($month['paid'])) || ($month['auto_debit_status'] ?? '') === 'Confirmed';
+                                // Other fee for this month from record or purchases
+                                $month_ym = !empty($month['date']) ? date('Y-m', strtotime($month['date'])) : '';
+                                $month_other_fee = !empty($other_fee_by_month) && !empty($month_ym) && isset($other_fee_by_month[$month_ym]) ? $other_fee_by_month[$month_ym] : 0;
+                                $display_other = !empty($month['other_fee']) ? (float)$month['other_fee'] : (float)$month_other_fee;
+
+                                $row_fee = (float)($month['acc_fees'] ?? 0) + $display_other;
                                 $row_gst = ($row_gst_rate > 0 && !empty($gst_enabled) && $row_fee > 0) ? round(($row_fee * $row_gst_rate) / 100, 2) : 0;
                                 if (!$is_paid && $month['balance'] > 0) {
                                     $total_gst_col += $row_gst;
@@ -60,17 +69,33 @@
                                 // For display: use actual values for unpaid, display_ values for paid months
                                 $show_penalty = $is_paid ? ($month['display_penalty'] ?? $month['penalty']) : $month['penalty'];
                                 $show_days    = $is_paid ? ($month['display_days']   ?? $month['days'])    : ($month['days'] ?? $month['due_days'] ?? 0);
-                                // Other fee for this month from purchases
-                                $month_ym = !empty($month['date']) ? date('Y-m', strtotime($month['date'])) : '';
-                                $month_other_fee = !empty($other_fee_by_month) && !empty($month_ym) && isset($other_fee_by_month[$month_ym]) ? $other_fee_by_month[$month_ym] : 0;
+
+                                // Total for this row: Fee + Late Fee + GST
+                                $row_base  = (float)($month['outstanding'] ?? 0) + $row_fee + (float)$show_penalty;
+                                $row_total = round($row_base + $row_gst, 2);
+
+                                // Paid & Balance:
+                                // If month is confirmed/paid, paid amount matches row_total (not old turnover payments like 6,333.33)
+                                if ($is_paid) {
+                                    $display_paid = $row_total;
+                                    $display_balance = 0;
+                                } else {
+                                    $display_paid = (!empty($month['paid']) && (float)$month['paid'] < $row_total) ? (float)$month['paid'] : 0;
+                                    $display_balance = max(0, round($row_total - $display_paid, 2));
+                                }
+
+                                $total_all_gst     += $row_gst;
+                                $total_all_sum     += $row_total;
+                                $total_all_paid    += $display_paid;
+                                $total_all_balance += $display_balance;
                             ?>
                                 <tr>
                                     <td><?= $month['month']; ?></td>
                                     <td class="cell-right"><?= $this->amount->toDecimal($month['outstanding'], false); ?></td>
-                                    <td class="cell-right"><?= $this->amount->toDecimal($month['acc_fees'], false); ?></td>
+                                    <td class="cell-right"><?= (!empty($month['acc_fees']) && (float)$month['acc_fees'] > 0) ? $this->amount->toDecimal($month['acc_fees'], false) : '--'; ?></td>
                                     <td class="cell-right">
-                                        <?php if ($month_other_fee > 0) { ?>
-                                            <span class="text-primary"><?= $this->amount->toDecimal($month_other_fee, false); ?></span>
+                                        <?php if ($display_other > 0) { ?>
+                                            <span class="text-primary"><?= $this->amount->toDecimal($display_other, false); ?></span>
                                         <?php } else { ?>
                                             --
                                         <?php } ?>
@@ -82,7 +107,6 @@
                                             <?= $this->amount->toDecimal($show_penalty, false); ?>
                                         <?php } ?>
                                     </td>
-                                    <td class="cell-right"><?= $this->amount->toDecimal(isset($month['gross_total']) ? $month['gross_total'] : $month['total'], false); ?></td>
                                     <td class="cell-right">
                                         <?php if ($row_gst > 0) { ?>
                                             <span class="<?= $is_paid ? 'text-success' : 'text-info'; ?>"><?= $this->amount->toDecimal($row_gst, false); ?></span>
@@ -90,14 +114,15 @@
                                             --
                                         <?php } ?>
                                     </td>
+                                    <td class="cell-right"><strong><?= $this->amount->toDecimal($row_total, false); ?></strong></td>
                                     <td class="cell-right">
-                                        <?php if ($month['paid'] > 0) { ?>
-                                            <span class="badge bg-success"><?= $this->amount->toDecimal($month['paid'], false); ?></span>
+                                        <?php if ($display_paid > 0) { ?>
+                                            <span class="badge bg-success"><?= $this->amount->toDecimal($display_paid, false); ?></span>
                                         <?php } else { ?>
-                                            <?= $this->amount->toDecimal($month['paid'], false); ?>
+                                            <?= $this->amount->toDecimal($display_paid, false); ?>
                                         <?php } ?>
                                     </td>
-                                    <td class="cell-right"><strong><?= $this->amount->toDecimal($month['balance'], false); ?></strong></td>
+                                    <td class="cell-right"><strong><?= $this->amount->toDecimal($display_balance, false); ?></strong></td>
                                     <td><?= $month['due_date']; ?></td>
                                     <td>
                                         <?php if ($show_days > 0) { ?>
@@ -115,21 +140,21 @@
                             <tr class="fw-bold">
                                 <th>Total</th>
                                 <th class="cell-right">--</th>
-                                <th class="cell-right"><?= isset($total_fees) ? $this->amount->toDecimal($total_fees, false) : '--'; ?></th>
-                                <th class="cell-right"><?= !empty($total_other_fee) ? $this->amount->toDecimal($total_other_fee, false) : '--'; ?></th>
+                                <th class="cell-right"><?= (!empty($total_fees) && (float)$total_fees > 0) ? $this->amount->toDecimal($total_fees, false) : '--'; ?></th>
+                                <th class="cell-right"><?= !empty($total_other) ? $this->amount->toDecimal($total_other, false) : (!empty($total_other_fee) ? $this->amount->toDecimal($total_other_fee, false) : '--'); ?></th>
                                 <th class="cell-right"><?= isset($total_penalty) ? $this->amount->toDecimal($total_penalty, false) : '--'; ?></th>
-                                <th class="cell-right"><?= isset($total_sum) ? $this->amount->toDecimal($total_sum, false) : '--'; ?></th>
-                                <th class="cell-right"><?= !empty($gst_amount) ? $this->amount->toDecimal($gst_amount, false) : ($total_gst_col > 0 ? $this->amount->toDecimal($total_gst_col, false) : '--'); ?></th>
+                                <th class="cell-right"><?= $total_all_gst > 0 ? $this->amount->toDecimal($total_all_gst, false) : (!empty($gst_amount) ? $this->amount->toDecimal($gst_amount, false) : '--'); ?></th>
+                                <th class="cell-right"><?= $this->amount->toDecimal($total_all_sum, false); ?></th>
                                 <th class="cell-right">
-                                    <?php if (isset($total_paid) && $total_paid > 0) { ?>
-                                        <span class="badge bg-success"><?= $this->amount->toDecimal($total_paid, false); ?></span>
-                                    <?php } elseif (isset($total_paid)) { ?>
-                                        <?= $this->amount->toDecimal($total_paid, false); ?>
+                                    <?php if ($total_all_paid > 0) { ?>
+                                        <span class="badge bg-success"><?= $this->amount->toDecimal($total_all_paid, false); ?></span>
+                                    <?php } elseif (isset($total_all_paid)) { ?>
+                                        <?= $this->amount->toDecimal($total_all_paid, false); ?>
                                     <?php } else { ?>
                                         --
                                     <?php } ?>
                                 </th>
-                                <th class="cell-right"><?= isset($last_month_balance) ? $this->amount->toDecimal($last_month_balance, false) : '--'; ?></th>
+                                <th class="cell-right"><?= $this->amount->toDecimal($total_all_balance, false); ?></th>
                                 <th>--</th>
                                 <th><?= $total_days ?? 0; ?></th>
                                 <th></th>

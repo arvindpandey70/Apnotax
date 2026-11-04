@@ -92,7 +92,7 @@ class Reports extends CI_Controller
      * Get accountancy report data and calculations for a user, firm, and financial year.
      * Shared by index() (Accounting Mode), payment() (Accounting Pay), and processpayment().
      */
-    private function get_accountancy_report_data($user_id, $firm_id, $year)
+    private function get_accountancy_report_data($user_id, $firm_id, $year, $include_late_fee = true)
     {
         $yearval = getyearmonthvalues($year);
         $year1 = $yearval['year1'];
@@ -316,7 +316,7 @@ class Reports extends CI_Controller
 
                     if (!$is_paid_month && $due_dt < $ref_dt) {
                         $days = $display_days;
-                        $penalty = $display_penalty;
+                        $penalty = $include_late_fee ? $display_penalty : 0;
                         $total_penalty += $penalty;
                         $total_days += $days;
                     }
@@ -405,7 +405,9 @@ class Reports extends CI_Controller
             if (!empty($unpaid_months)) {
                 $first_month_data = reset($unpaid_months);
                 $last_month_data = end($unpaid_months);
-                $last_month_balance = $last_month_data['balance'];
+                $last_month_balance = $include_late_fee
+                    ? $last_month_data['balance']
+                    : array_sum(array_column($unpaid_months, 'balance'));
 
                 if (count($unpaid_months) > 1) {
                     $payment_month_range = $first_month_data['month'] . '-' . $last_month_data['month'];
@@ -548,6 +550,9 @@ class Reports extends CI_Controller
                     $penalty *= $days;
                 }
                 $penalty = round($penalty);
+                if (!$include_late_fee) {
+                    $penalty = 0;
+                }
                 $total_penalty += $penalty;
                 $total_days += $days;
             } else {
@@ -1946,7 +1951,7 @@ class Reports extends CI_Controller
             return;
         }
 
-        $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
+        $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year, false);
         if (!$acc_data['status']) {
             $this->session->set_flashdata('err_msg', $acc_data['message']);
             redirect($acc_data['redirect'] ?? 'home/');
@@ -2087,7 +2092,7 @@ class Reports extends CI_Controller
                 return;
             }
 
-            $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year);
+            $acc_data = $this->get_accountancy_report_data($user_id, $firm_id, $year, false);
             if (!$acc_data['status']) {
                 $this->session->set_flashdata('err_msg', $acc_data['message']);
                 redirect($acc_data['redirect'] ?? 'home/');
@@ -2149,15 +2154,20 @@ class Reports extends CI_Controller
             $payment_success = true;
             $payment_errors = array();
             $previous_balance = 0;
+            $is_monthly_package = isset($acc_data['pkg_type']) && $acc_data['pkg_type'] === 'Monthly';
 
             foreach ($unpaid_months as $month_data) {
-                $month_payment_amount = $month_data['balance'] - $previous_balance;
+                $month_payment_amount = $is_monthly_package
+                    ? $month_data['balance']
+                    : $month_data['balance'] - $previous_balance;
 
                 if ($month_payment_amount <= 0) {
                     continue;
                 }
 
-                $previous_balance = $month_data['balance'];
+                if (!$is_monthly_package) {
+                    $previous_balance = $month_data['balance'];
+                }
 
                 $payment_date = date('Y-m-d');
                 if (!empty($month_data['due_date']) && $month_data['due_date'] != '--') {

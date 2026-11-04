@@ -29,8 +29,7 @@
                     <table class="table table-bordered">
                         <?php
                         $row_gst_rate = isset($gst_rate) ? floatval($gst_rate) : 18.0;
-                        $total_gst_col = 0;
-                        $previous_unpaid_balance = 0;
+                        $total_all_subtotal = 0;
                         $total_all_gst = 0;
                         $total_all_sum = 0;
                         $total_all_paid = 0;
@@ -42,7 +41,7 @@
                                 <th class="cell-right">Outstanding</th>
                                 <th class="cell-right">Accounts Fee</th>
                                 <th class="cell-right">Other Fee</th>
-                                <th class="cell-right">Late Fee</th>
+                                <th class="cell-right">Subtotal</th>
                                 <th class="cell-right">GST</th>
                                 <th class="cell-right">Total</th>
                                 <th class="cell-right">Paid</th>
@@ -63,15 +62,10 @@
 
                                 $row_fee = (float)($month['acc_fees'] ?? 0) + $display_other;
                                 $row_gst = ($row_gst_rate > 0 && !empty($gst_enabled) && $row_fee > 0) ? round(($row_fee * $row_gst_rate) / 100, 2) : 0;
-                                if (!$is_paid && $month['balance'] > 0) {
-                                    $total_gst_col += $row_gst;
-                                }
-                                // For display: use actual values for unpaid, display_ values for paid months
-                                $show_penalty = $is_paid ? ($month['display_penalty'] ?? $month['penalty']) : $month['penalty'];
                                 $show_days    = $is_paid ? ($month['display_days']   ?? $month['days'])    : ($month['days'] ?? $month['due_days'] ?? 0);
 
-                                // Total for this row: Fee + Late Fee + GST
-                                $row_base  = (float)($month['outstanding'] ?? 0) + $row_fee + (float)$show_penalty;
+                                // Monthly packages use Other Fee; accounting packages use Accounts Fee plus Other Fee.
+                                $row_base  = (float)($month['outstanding'] ?? 0) + $row_fee;
                                 $row_total = round($row_base + $row_gst, 2);
 
                                 // Paid & Balance:
@@ -85,6 +79,7 @@
                                 }
 
                                 $total_all_gst     += $row_gst;
+                                $total_all_subtotal += $row_fee;
                                 $total_all_sum     += $row_total;
                                 $total_all_paid    += $display_paid;
                                 $total_all_balance += $display_balance;
@@ -100,13 +95,7 @@
                                             --
                                         <?php } ?>
                                     </td>
-                                    <td class="cell-right">
-                                        <?php if ($show_penalty > 0) { ?>
-                                            <span class="text-danger"><?= $this->amount->toDecimal($show_penalty, false); ?></span>
-                                        <?php } else { ?>
-                                            <?= $this->amount->toDecimal($show_penalty, false); ?>
-                                        <?php } ?>
-                                    </td>
+                                    <td class="cell-right"><?= $this->amount->toDecimal($row_fee, false); ?></td>
                                     <td class="cell-right">
                                         <?php if ($row_gst > 0) { ?>
                                             <span class="<?= $is_paid ? 'text-success' : 'text-info'; ?>"><?= $this->amount->toDecimal($row_gst, false); ?></span>
@@ -142,7 +131,7 @@
                                 <th class="cell-right">--</th>
                                 <th class="cell-right"><?= (!empty($total_fees) && (float)$total_fees > 0) ? $this->amount->toDecimal($total_fees, false) : '--'; ?></th>
                                 <th class="cell-right"><?= !empty($total_other) ? $this->amount->toDecimal($total_other, false) : (!empty($total_other_fee) ? $this->amount->toDecimal($total_other_fee, false) : '--'); ?></th>
-                                <th class="cell-right"><?= isset($total_penalty) ? $this->amount->toDecimal($total_penalty, false) : '--'; ?></th>
+                                <th class="cell-right"><?= $this->amount->toDecimal($total_all_subtotal, false); ?></th>
                                 <th class="cell-right"><?= $total_all_gst > 0 ? $this->amount->toDecimal($total_all_gst, false) : (!empty($gst_amount) ? $this->amount->toDecimal($gst_amount, false) : '--'); ?></th>
                                 <th class="cell-right"><?= $this->amount->toDecimal($total_all_sum, false); ?></th>
                                 <th class="cell-right">
@@ -163,39 +152,39 @@
                             <?php if (!empty($last_month_balance) && $last_month_balance > 0 && !empty($unpaid_months)) { ?>
                                 <?php if (!empty($gst_enabled) && $gst_enabled && $gst_amount > 0) { ?>
                                     <tr>
-                                        <th colspan="7" class="cell-right">Subtotal:</th>
+                                        <th colspan="5" class="cell-right">Subtotal:</th>
                                         <th class="cell-right"><?= $this->amount->toDecimal($last_month_balance, false); ?></th>
-                                        <th colspan="4"></th>
+                                        <th colspan="7"></th>
                                     </tr>
                                     <?php if (!empty($states_match) && $states_match && ($sgst_amount > 0 || $cgst_amount > 0)) { ?>
                                         <tr>
-                                            <th colspan="7" class="cell-right">SGST (9%):</th>
+                                            <th colspan="5" class="cell-right">SGST (9%):</th>
                                             <th class="cell-right"><?= $this->amount->toDecimal($sgst_amount, false); ?></th>
-                                            <th colspan="4"></th>
+                                            <th colspan="7"></th>
                                         </tr>
                                         <tr>
-                                            <th colspan="7" class="cell-right">CGST (9%):</th>
+                                            <th colspan="5" class="cell-right">CGST (9%):</th>
                                             <th class="cell-right"><?= $this->amount->toDecimal($cgst_amount, false); ?></th>
-                                            <th colspan="4"></th>
+                                            <th colspan="7"></th>
                                         </tr>
                                     <?php } elseif (!empty($igst_amount) && $igst_amount > 0) { ?>
                                         <tr>
-                                            <th colspan="7" class="cell-right">IGST (18%):</th>
+                                            <th colspan="5" class="cell-right">IGST (18%):</th>
                                             <th class="cell-right"><?= $this->amount->toDecimal($igst_amount, false); ?></th>
-                                            <th colspan="4"></th>
+                                            <th colspan="7"></th>
                                         </tr>
                                     <?php } else { ?>
                                         <tr>
-                                            <th colspan="7" class="cell-right">GST (<?= $gst_rate; ?>%):</th>
+                                            <th colspan="5" class="cell-right">GST (<?= $gst_rate; ?>%):</th>
                                             <th class="cell-right"><?= $this->amount->toDecimal($gst_amount, false); ?></th>
-                                            <th colspan="4"></th>
+                                            <th colspan="7"></th>
                                         </tr>
                                     <?php } ?>
                                 <?php } ?>
                                 <tr>
-                                    <th colspan="7" class="cell-right">Total Amount to Pay:</th>
+                                    <th colspan="6" class="cell-right">Total Amount to Pay:</th>
                                     <th class="cell-right"><?= $this->amount->toDecimal(!empty($total_with_gst) ? $total_with_gst : $last_month_balance, false); ?></th>
-                                    <th colspan="4"></th>
+                                    <th colspan="6"></th>
                                 </tr>
                             <?php } ?>
                         </tfoot>

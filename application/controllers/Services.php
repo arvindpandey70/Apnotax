@@ -2032,11 +2032,96 @@ class Services extends CI_Controller
                                 }
                                 // --------------------------------------------
                                 
+                                // Process upfront payment for selected Monthly package via Wallet or Credit Limit
+                                $today_date = date('Y-m-d');
+                                $cust_row = $this->customer->getcustomers(['t1.user_id' => $user['id']], 'single');
+                                $gst_enabled = !empty($cust_row) && !empty($cust_row['gst_enabled']) && $cust_row['gst_enabled'] == 1;
+                                $gst_rate = $gst_enabled ? 18.0 : 0.0;
+                                $total_gst = $gst_enabled ? round(($bill_amount * $gst_rate) / 100, 2) : 0;
+                                $total_charge = round($bill_amount + $total_gst, 2);
+
+                                $this->load->model('Wallet_model', 'wallet');
+                                $wallet_balance = (float)$this->wallet->getwalletbalance($user['id']);
+                                $credit_balance = (float)$this->wallet->get_available_credit($user['id']);
+
+                                $w_deduct = 0.0;
+                                $c_deduct = 0.0;
+                                if ($wallet_balance >= $total_charge) {
+                                    $w_deduct = $total_charge;
+                                } elseif ($credit_balance >= $total_charge) {
+                                    $c_deduct = $total_charge;
+                                } elseif (($wallet_balance + $credit_balance) >= $total_charge && $wallet_balance > 0) {
+                                    $w_deduct = $wallet_balance;
+                                    $c_deduct = round($total_charge - $wallet_balance, 2);
+                                }
+
+                                if ($w_deduct > 0 && $c_deduct > 0) {
+                                    $this->db->insert('purchases', [
+                                        'date'        => $today_date,
+                                        'year'        => $year,
+                                        'type'        => 'Monthly',
+                                        'user_id'     => $user['id'],
+                                        'service_id'  => 1,
+                                        'firm_id'     => $firm_id,
+                                        'service'     => 'Account Work Monthly (Wallet)',
+                                        'rate'        => round($bill_amount * ($w_deduct / $total_charge), 2),
+                                        'subtotal'    => round($bill_amount * ($w_deduct / $total_charge), 2),
+                                        'gst_amount'  => round($total_gst * ($w_deduct / $total_charge), 2),
+                                        'gst_enabled' => $gst_enabled ? 1 : 0,
+                                        'amount'      => $w_deduct,
+                                        'status'      => 0,
+                                        'added_on'    => $datetime,
+                                        'updated_on'  => $datetime
+                                    ]);
+                                    $this->db->insert('purchases', [
+                                        'date'        => $today_date,
+                                        'year'        => $year,
+                                        'type'        => 'Credit limit',
+                                        'user_id'     => $user['id'],
+                                        'service_id'  => 1,
+                                        'firm_id'     => $firm_id,
+                                        'service'     => 'Account Work Monthly (Credit Limit)',
+                                        'rate'        => round($bill_amount * ($c_deduct / $total_charge), 2),
+                                        'subtotal'    => round($bill_amount * ($c_deduct / $total_charge), 2),
+                                        'gst_amount'  => round($total_gst * ($c_deduct / $total_charge), 2),
+                                        'gst_enabled' => $gst_enabled ? 1 : 0,
+                                        'amount'      => $c_deduct,
+                                        'status'      => 0,
+                                        'added_on'    => $datetime,
+                                        'updated_on'  => $datetime
+                                    ]);
+                                    $this->db->where('user_id', $user['id'])->where('firm_id', $firm_id)->where('year', $year)->where('package_type', 'Monthly');
+                                    $this->db->update('customer_packages', ['payment_status' => 1, 'updated_on' => $datetime]);
+                                } elseif ($c_deduct > 0 || $w_deduct > 0) {
+                                    $ins_type = ($c_deduct > 0) ? 'Credit limit' : 'Monthly';
+                                    $svc_label = ($c_deduct > 0) ? 'Account Work Monthly (Credit Limit)' : 'Account Work Monthly';
+                                    $this->db->insert('purchases', [
+                                        'date'        => $today_date,
+                                        'year'        => $year,
+                                        'type'        => $ins_type,
+                                        'user_id'     => $user['id'],
+                                        'service_id'  => 1,
+                                        'firm_id'     => $firm_id,
+                                        'service'     => $svc_label,
+                                        'rate'        => $bill_amount,
+                                        'subtotal'    => $bill_amount,
+                                        'gst_amount'  => $total_gst,
+                                        'gst_enabled' => $gst_enabled ? 1 : 0,
+                                        'amount'      => $total_charge,
+                                        'status'      => 0,
+                                        'added_on'    => $datetime,
+                                        'updated_on'  => $datetime
+                                    ]);
+                                    $this->db->where('user_id', $user['id'])->where('firm_id', $firm_id)->where('year', $year)->where('package_type', 'Monthly');
+                                    $this->db->update('customer_packages', ['payment_status' => 1, 'updated_on' => $datetime]);
+                                }
+
                                 // Immediately process pending auto debits using Wallet / Credit Limit
                                 $this->load->library('auto_debit_service');
                                 $this->auto_debit_service->process_user_pending_auto_debits($user['id']);
 
-                                $this->session->set_flashdata("msg", "Account Work Monthly package selected successfully! Package expires on " . date('d-m-Y', strtotime($expiry_date)) . ". Amount ₹" . number_format($amount, 2) . " will be auto-debited monthly.");
+                                $pm_text = ($c_deduct > 0 && $w_deduct > 0) ? ' (deducted from Wallet & Credit Limit)' : (($c_deduct > 0) ? ' (deducted from Credit Limit)' : '');
+                                $this->session->set_flashdata("msg", "Account Work Monthly package selected successfully!" . $pm_text . " Package expires on " . date('d-m-Y', strtotime($expiry_date)) . ". Amount ₹" . number_format($amount, 2) . " will be auto-debited monthly.");
                             } else {
                                 $name = $package_id == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
                                 $this->load->library('auto_debit_service');

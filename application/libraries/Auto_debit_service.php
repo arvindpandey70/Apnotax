@@ -780,7 +780,7 @@ class Auto_debit_service
         $m_val = (int)date('m', strtotime($acc_date));
         $y_val = (int)date('Y', strtotime($acc_date));
         $existing_acc_payment = $this->CI->db->query(
-            "SELECT id FROM acc_payment WHERE user_id = ? AND firm_id = ? AND MONTH(acc_date) = ? AND YEAR(acc_date) = ?",
+            "SELECT id FROM acc_payment WHERE user_id = ? AND firm_id = ? AND MONTH(acc_date) = ? AND YEAR(acc_date) = ? AND status = 1",
             array($user_id, $firm_id, $m_val, $y_val)
         );
         if ($existing_acc_payment && $existing_acc_payment->num_rows() > 0) {

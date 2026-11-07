@@ -294,14 +294,22 @@
                                     <div class="col-5"><strong>Total Amount:</strong></div>
                                     <div class="col-7"><span class="text-success fw-bold" style="font-size: 1.1em;">₹<?= $this->amount->toDecimal(!empty($total_with_gst) ? $total_with_gst : $last_month_balance, false); ?></span></div>
                                 </div>
-                                <div class="row">
+                                <div class="row mb-2">
                                     <div class="col-5"><strong>Months to Pay:</strong></div>
                                     <div class="col-7"><?= count($unpaid_months); ?> month(s)</div>
                                 </div>
+                                <div class="row mb-2">
+                                    <div class="col-5"><strong>Wallet Balance:</strong></div>
+                                    <div class="col-7"><span class="text-primary fw-semibold">₹<?= number_format(!empty($wallet_balance) ? $wallet_balance : 0, 2); ?></span></div>
+                                </div>
+                                <div class="row mb-2">
+                                    <div class="col-5"><strong>Available Credit Limit:</strong></div>
+                                    <div class="col-7"><span class="text-info fw-semibold">₹<?= number_format(!empty($credit_balance) ? $credit_balance : 0, 2); ?></span></div>
+                                </div>
                             </div>
-                            <div class="alert alert-warning mb-0" role="alert">
-                                <i class="fa fa-exclamation-triangle me-2"></i>
-                                <strong>Please confirm:</strong> This amount will be deducted from your wallet balance. Are you sure you want to proceed?
+                            <div class="alert alert-info mb-0" role="alert">
+                                <i class="fa fa-info-circle me-2"></i>
+                                <strong>Payment Deduction:</strong> If wallet balance is insufficient, the amount will be automatically deducted from your <strong>Credit Limit</strong>.
                             </div>
                         </div>
                         <div class="modal-footer">

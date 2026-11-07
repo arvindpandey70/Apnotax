@@ -2073,6 +2073,10 @@ class Reports extends CI_Controller
         $data['other_fee_by_month'] = $other_fee_by_month;
         $data['total_other_fee'] = round($total_other_fee, 2);
 
+        $this->load->model('Wallet_model', 'wallet');
+        $data['wallet_balance'] = (float)$this->wallet->getwalletbalance($user_id);
+        $data['credit_balance'] = (float)$this->wallet->get_available_credit($user_id);
+
         $this->template->load('reports', 'payment', $data);
     }
 
@@ -2131,21 +2135,14 @@ class Reports extends CI_Controller
                 return;
             }
 
-            // Check wallet balance before processing payment
+            // Check wallet and credit limit balance before processing payment
             $this->load->model('Wallet_model', 'wallet');
-            $wallet_balance = $this->wallet->getwalletbalance($user_id);
-
-            if ($wallet_balance <= 0) {
-                $this->session->set_flashdata('err_msg', 'Insufficient wallet balance! Your wallet balance is ₹' . number_format($wallet_balance, 2) . '. Please add funds to your wallet first.');
-                redirect('reports/payment/');
-                return;
-            }
-
+            $wallet_balance = (float)$this->wallet->getwalletbalance($user_id);
+            $credit_balance = (float)$this->wallet->get_available_credit($user_id);
             $total_amount_needed = $expected_total;
 
-            if ($wallet_balance < $total_amount_needed) {
-                $needed = round($total_amount_needed - $wallet_balance, 2);
-                $this->session->set_flashdata('err_msg', 'Insufficient wallet balance! You need ₹' . number_format($needed, 2) . ' more. Current balance: ₹' . number_format(round($wallet_balance, 2), 2) . ', Required: ₹' . number_format($total_amount_needed, 2) . ($gst_enabled_check ? ' (including GST)' : ''));
+            if ($wallet_balance < $total_amount_needed && $credit_balance < $total_amount_needed && ($wallet_balance + $credit_balance) < $total_amount_needed) {
+                $this->session->set_flashdata('err_msg', 'Insufficient balance! Required: ₹' . number_format($total_amount_needed, 2) . '. Wallet Balance: ₹' . number_format(max(0, $wallet_balance), 2) . ', Available Credit Limit: ₹' . number_format(max(0, $credit_balance), 2) . '. Please add funds or request a credit limit increase.');
                 redirect('reports/payment/');
                 return;
             }
@@ -2155,6 +2152,9 @@ class Reports extends CI_Controller
             $payment_errors = array();
             $previous_balance = 0;
             $is_monthly_package = isset($acc_data['pkg_type']) && $acc_data['pkg_type'] === 'Monthly';
+            $rem_wallet = max(0.0, $wallet_balance);
+            $used_credit_total = 0.0;
+            $used_wallet_total = 0.0;
 
             foreach ($unpaid_months as $month_data) {
                 $month_payment_amount = $is_monthly_package
@@ -2183,21 +2183,85 @@ class Reports extends CI_Controller
                 $month_gst = $gst_enabled_check ? round(($month_fee * 18) / 100, 2) : 0;
                 $month_total = round($month_payment_amount + $month_gst, 2);
 
-                $payment_data = array(
-                    'user_id' => $user_id,
-                    'firm_id' => $firm_id,
-                    'year' => $year,
-                    'acc_date' => $acc_date,
-                    'date' => $payment_date,
-                    'amount' => $month_total,
-                    'added_by' => $user['id']
-                );
+                // Determine wallet vs credit limit deduction for this month
+                $w_deduct = 0.0;
+                $c_deduct = 0.0;
 
-                $result = $this->wallet->makeaccountancypayment($payment_data);
-                if ($result['status'] !== true) {
-                    $payment_success = false;
-                    $payment_errors[] = $result['message'] . ' (Month: ' . (!empty($month_data['date']) ? date('F Y', strtotime($month_data['date'])) : 'N/A') . ', Amount: ₹' . number_format($month_payment_amount, 2) . ')';
+                if ($rem_wallet >= $month_total) {
+                    $w_deduct = $month_total;
+                    $rem_wallet -= $month_total;
+                } elseif ($rem_wallet > 0) {
+                    $w_deduct = $rem_wallet;
+                    $c_deduct = round($month_total - $rem_wallet, 2);
+                    $rem_wallet = 0.0;
+                } else {
+                    $c_deduct = $month_total;
                 }
+
+                $used_wallet_total += $w_deduct;
+                $used_credit_total += $c_deduct;
+
+                if ($w_deduct > 0 && $c_deduct > 0) {
+                    // Split payment row 1: Wallet
+                    $p1 = array(
+                        'user_id'      => $user_id,
+                        'firm_id'      => $firm_id,
+                        'year'         => $year,
+                        'acc_date'     => $acc_date,
+                        'date'         => $payment_date,
+                        'amount'       => $w_deduct,
+                        'payment_mode' => 'Wallet',
+                        'status'       => 1,
+                        'acc_fee'      => round($month_payment_amount * ($w_deduct / $month_total), 2),
+                        'added_by'     => $user['id'],
+                        'added_on'     => date('Y-m-d H:i:s'),
+                        'updated_on'   => date('Y-m-d H:i:s')
+                    );
+                    $this->db->insert('acc_payment', $p1);
+
+                    // Split payment row 2: Credit Limit
+                    $p2 = array(
+                        'user_id'      => $user_id,
+                        'firm_id'      => $firm_id,
+                        'year'         => $year,
+                        'acc_date'     => $acc_date,
+                        'date'         => $payment_date,
+                        'amount'       => $c_deduct,
+                        'payment_mode' => 'Credit Limit',
+                        'status'       => 1,
+                        'acc_fee'      => round($month_payment_amount * ($c_deduct / $month_total), 2),
+                        'added_by'     => $user['id'],
+                        'added_on'     => date('Y-m-d H:i:s'),
+                        'updated_on'   => date('Y-m-d H:i:s')
+                    );
+                    $this->db->insert('acc_payment', $p2);
+                } else {
+                    $chosen_mode = ($c_deduct > 0) ? 'Credit Limit' : 'Wallet';
+                    $payment_data = array(
+                        'user_id'      => $user_id,
+                        'firm_id'      => $firm_id,
+                        'year'         => $year,
+                        'acc_date'     => $acc_date,
+                        'date'         => $payment_date,
+                        'amount'       => $month_total,
+                        'payment_mode' => $chosen_mode,
+                        'status'       => 1,
+                        'acc_fee'      => $month_payment_amount,
+                        'added_by'     => $user['id']
+                    );
+
+                    $result = $this->wallet->makeaccountancypayment($payment_data);
+                    if ($result['status'] !== true) {
+                        $payment_success = false;
+                        $payment_errors[] = $result['message'] . ' (Month: ' . (!empty($month_data['date']) ? date('F Y', strtotime($month_data['date'])) : 'N/A') . ', Amount: ₹' . number_format($month_payment_amount, 2) . ')';
+                    }
+                }
+
+                // Update auto_debit_status in accountancy table
+                $this->db->where('user_id', $user_id);
+                $this->db->where('firm_id', $firm_id);
+                $this->db->where('date', $acc_date);
+                $this->db->update('accountancy', ['auto_debit_status' => 'Confirmed']);
             }
 
             if (!$payment_success) {
@@ -2287,6 +2351,11 @@ class Reports extends CI_Controller
             $payment_msg = 'Payment of ₹' . number_format($subtotal, 2);
             if ($gst_enabled && $gst_amount > 0) {
                 $payment_msg .= ' + GST ₹' . number_format($gst_amount, 2) . ' (Total: ₹' . number_format($total_amount, 2) . ')';
+            }
+            if ($used_credit_total > 0 && $used_wallet_total > 0) {
+                $payment_msg .= ' [₹' . number_format($used_wallet_total, 2) . ' from Wallet, ₹' . number_format($used_credit_total, 2) . ' from Credit Limit]';
+            } elseif ($used_credit_total > 0) {
+                $payment_msg .= ' [Deducted from Credit Limit: ₹' . number_format($used_credit_total, 2) . ']';
             }
             $payment_msg .= ' processed successfully!' . (!empty($invoice_no) ? ' Invoice: ' . $invoice_no : '');
             $this->session->set_flashdata('msg', $payment_msg);

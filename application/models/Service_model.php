@@ -498,7 +498,7 @@ class Service_model extends CI_Model
             FROM
                 {$accountancy_table} t1
             LEFT JOIN
-                {$payment_table} t2 ON t1.user_id = t2.user_id AND t1.date = t2.acc_date AND t1.firm_id = t2.firm_id
+                {$payment_table} t2 ON t1.user_id = t2.user_id AND t1.date = t2.acc_date AND t1.firm_id = t2.firm_id AND t2.status = 1
             WHERE
                 $where
             GROUP BY

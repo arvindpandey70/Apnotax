@@ -686,6 +686,7 @@ class Package extends CI_Controller
             $this->db->delete('customer_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
             // Also clean up associated Account Work purchases
             $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id' => 1]);
+            $this->db->delete('acc_payment', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
             $this->session->set_flashdata("msg", "Account Work Package deleted successfully!");
         } else {
             $this->session->set_flashdata("err_msg", "Account Work Package not found!");

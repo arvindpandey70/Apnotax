@@ -65,6 +65,101 @@ class Creditlimit extends CI_Controller
         $this->template->load('creditlimit', 'index', $data);
     }
 
+    public function percentage()
+    {
+        if ($this->session->role != 'admin') {
+            redirect('creditlimit');
+            return;
+        }
+
+        $data = [
+            'title' => 'Credit Limit Percentage',
+            'breadcrumb' => ['active' => 'Credit Limit Percentage']
+        ];
+        $data['percentages'] = $this->db
+            ->order_by('id', 'DESC')
+            ->get('credit_limit_percentage')
+            ->result_array();
+
+        $this->template->load('creditlimit', 'percentage', $data);
+    }
+
+    public function addpercentage()
+    {
+        if ($this->session->role != 'admin') {
+            redirect('creditlimit');
+            return;
+        }
+
+        if (!$this->input->post()) {
+            redirect('creditlimit/percentage');
+            return;
+        }
+
+        $percent = trim((string)$this->input->post('percent'));
+        $id = (int)$this->input->post('id');
+        if (!is_numeric($percent) || (float)$percent <= 0) {
+            $this->session->set_flashdata('err_msg', 'Enter a percentage greater than zero.');
+            redirect('creditlimit/percentage');
+            return;
+        }
+
+        if ($id > 0 && !$this->db->get_where('credit_limit_percentage', ['id' => $id])->row_array()) {
+            $this->session->set_flashdata('err_msg', 'Percentage record not found.');
+            redirect('creditlimit/percentage');
+            return;
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $this->db->trans_start();
+        $this->db->where('status', 1)->update('credit_limit_percentage', [
+            'status' => 0,
+            'updated_on' => $now
+        ]);
+
+        if ($id > 0) {
+            $this->db->where('id', $id)->update('credit_limit_percentage', [
+                'percent' => (float)$percent,
+                'status' => 1,
+                'updated_on' => $now
+            ]);
+        } else {
+            $this->db->insert('credit_limit_percentage', [
+                'percent' => (float)$percent,
+                'status' => 1,
+                'added_on' => $now,
+                'updated_on' => $now
+            ]);
+        }
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === false) {
+            log_message('error', 'Failed to save the credit limit percentage.');
+            $this->session->set_flashdata('err_msg', 'Unable to save the percentage. Please try again.');
+        } else {
+            $this->session->set_flashdata('msg', 'Percentage saved successfully.');
+        }
+
+        redirect('creditlimit/percentage');
+    }
+
+    public function getpercentage()
+    {
+        if ($this->session->role != 'admin') {
+            show_error('Unauthorized', 403);
+            return;
+        }
+
+        $id = (int)$this->input->post('id');
+        $percentage = $id > 0
+            ? $this->db->get_where('credit_limit_percentage', ['id' => $id])->row_array()
+            : null;
+
+        $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($percentage));
+    }
+
     public function month_details($year_month = null)
     {
         $user = getuser();

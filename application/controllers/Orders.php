@@ -467,7 +467,9 @@ class Orders extends CI_Controller
                 $data['total_turnover'] = $turnover;
                 $cpackage = $query->unbuffered_row('array');
                 $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-                $data['package'] = $this->master->getpackages(['name' => $name, 'turnover>' => $turnover], 'single');
+                $fee_data = calculate_accountancy_fee($name, $turnover);
+                $data['package'] = $fee_data['package'];
+                $data['package_fee'] = $fee_data['fees'];
                 $this->load->view('orders/acc_table', $data);
             } else {
                 echo '<h3 class="text-danger">No Package Selected!</h3>';

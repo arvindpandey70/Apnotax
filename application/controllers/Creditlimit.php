@@ -7,21 +7,22 @@ class Creditlimit extends CI_Controller
     {
         parent::__construct();
         checklogin();
+        $this->load->model('Wallet_model', 'wallet');
+        $this->load->library('credit_service');
     }
 
-    public function index()
+    public function index($cust_param_id = null)
     {
         $data = ['title' => 'Credit Limit'];
         $data['breadcrumb'] = array("active" => "Credit Limit");
         $data['datatable'] = true;
-        
+
         if ($this->session->role == 'admin') {
             $query = $this->db->select('t1.id as customer_id, t1.name, t1.mobile, t1.email, t1.credit_limit, t1.credit_percent, t1.user_id')
                                ->from('customers as t1')
                                ->get();
             $data['customers'] = ($query && is_object($query)) ? $query->result_array() : [];
-                                          
-            $this->load->model('Wallet_model', 'wallet');
+
             // Calculate used credit, tax, total used, and available credit for all customers
             if (!empty($data['customers'])) {
                 foreach ($data['customers'] as $key => $cust) {
@@ -31,132 +32,146 @@ class Creditlimit extends CI_Controller
                     $data['customers'][$key]['effective_percent'] = $this->wallet->get_credit_percent($cust['user_id']);
                 }
             }
-            
+
+            // Preserved completely for Admin view as requested
             $this->template->load('creditlimit', 'admin_index', $data);
             return;
         }
-        
-        // Fetch current user details
+
+        // Customer view
+        $fy = $this->input->get('fy') ?: '2026-2027';
+        $fy_parts = explode('-', $fy);
+        $fy_start_year = (int)$fy_parts[0];
+        if ($fy_start_year <= 2000) $fy_start_year = 2026;
+
         $user = getuser();
-        $this->load->model('Wallet_model', 'wallet');
-        
-        // Fetch customer record for this user
         $customer = $this->db->get_where('customers', ['user_id' => $user['id']])->unbuffered_row('array');
-        
+
         $credit_limit = 0.00;
         if (!empty($customer) && isset($customer['credit_limit'])) {
             $credit_limit = (float)$customer['credit_limit'];
         }
 
-        // Calculate used credit, percentage tax, total used with tax, and available limit
-        $used_credit = $this->wallet->get_used_credit($user['id']);
-        $credit_percent = $this->wallet->get_credit_percent($user['id']);
-        $tax_amount = $this->wallet->get_used_credit_tax($user['id']);
-        $total_used_with_tax = $this->wallet->get_total_used_credit_with_tax($user['id']);
-        $available_limit = $this->wallet->get_available_credit($user['id']);
-        
+        $ledger = $this->credit_service->get_fy_credit_ledger($user['id'], $fy_start_year);
+
+        $data['customer'] = $customer;
         $data['credit_limit'] = $credit_limit;
-        $data['credit_percent'] = $credit_percent;
-        $data['used_credit'] = $used_credit;
-        $data['tax_amount'] = $tax_amount;
-        $data['total_used_with_tax'] = $total_used_with_tax;
-        $data['available_limit'] = $available_limit;
-        
+        $data['fy'] = $fy;
+        $data['fy_start_year'] = $fy_start_year;
+        $data['ledger'] = $ledger;
+
         $this->template->load('creditlimit', 'index', $data);
     }
 
-    public function percentage()
+    public function month_details($year_month = null)
     {
-        if ($this->session->role != 'admin') {
-            redirect('home');
-            return;
-        }
-
-        $data = ['title' => 'Credit Limit Percentage'];
-        $data['breadcrumb'] = array("active" => "Credit Limit Percentage");
-        $data['datatable'] = true;
-
-        $query = $this->db->order_by('id', 'DESC')->get('credit_limit_percentage');
-        $data['percentages'] = ($query && is_object($query)) ? $query->result_array() : [];
-
-        $this->template->load('creditlimit', 'percentage', $data);
-    }
-
-    public function addpercentage()
-    {
-        if ($this->session->role != 'admin') {
-            redirect('home');
-            return;
-        }
-
-        if ($this->input->post('percent') !== NULL) {
-            $percent = trim($this->input->post('percent'));
-            $id = $this->input->post('id');
-
-            if ($percent === '') {
-                $this->session->set_flashdata("err_msg", "Percentage value is required!");
-                redirect($_SERVER['HTTP_REFERER']);
-                return;
-            }
-
-            $datetime = date('Y-m-d H:i:s');
-
-            if (!empty($id)) {
-                $this->db->where('id', $id);
-                $this->db->update('credit_limit_percentage', [
-                    'percent' => $percent,
-                    'updated_on' => $datetime
-                ]);
-                $this->session->set_flashdata("msg", "Credit Limit Percentage updated successfully!");
-            } else {
-                $this->db->update('credit_limit_percentage', ['status' => 0, 'updated_on' => $datetime], ['status' => 1]);
-
-                $this->db->insert('credit_limit_percentage', [
-                    'percent' => $percent,
-                    'status' => 1,
-                    'added_on' => $datetime,
-                    'updated_on' => $datetime
-                ]);
-                $this->session->set_flashdata("msg", "Credit Limit Percentage saved successfully!");
-            }
-        }
-
-        redirect($_SERVER['HTTP_REFERER']);
-    }
-
-    public function getpercentage()
-    {
-        if ($this->session->role != 'admin') {
+        $user = getuser();
+        if (!$user) {
             echo json_encode(['status' => false, 'message' => 'Unauthorized']);
             return;
         }
-        $id = $this->input->post('id');
-        $res = $this->db->get_where('credit_limit_percentage', ['id' => $id]);
-        $row = ($res && is_object($res)) ? $res->unbuffered_row('array') : null;
-        echo json_encode($row);
+
+        if (empty($year_month)) {
+            $year_month = $this->input->get('ym') ?: date('Y-m');
+        }
+
+        $res = $this->credit_service->get_month_daily_ledger($user['id'], $year_month);
+
+        header('Content-Type: application/json');
+        echo json_encode($res);
     }
 
-    public function update_limit()
+    public function export_csv()
+    {
+        $fy = $this->input->get('fy') ?: '2026-2027';
+        $fy_parts = explode('-', $fy);
+        $fy_start_year = (int)$fy_parts[0];
+        if ($fy_start_year <= 2000) $fy_start_year = 2026;
+
+        $user = getuser();
+        $user_id = $user['id'] ?? null;
+
+        if (!$user_id) {
+            show_error("Unauthorized");
+            return;
+        }
+
+        $filename = "credit_limit_ledger_" . $fy . "_" . date('Ymd_His') . ".csv";
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+
+        $output = fopen('php://output', 'w');
+
+        $ledger = $this->credit_service->get_fy_credit_ledger($user_id, $fy_start_year);
+
+        fputcsv($output, ['CREDIT LIMIT', number_format($ledger['credit_limit'], 2)]);
+        fputcsv($output, ['AVAILABLE CREDIT', number_format($ledger['available_credit'], 2)]);
+        fputcsv($output, ['TOTAL OUTSTANDING', number_format($ledger['total_outstanding'], 2)]);
+        fputcsv($output, ['PANEL INTEREST RATE', $ledger['interest_rate'] . '% per 30 days']);
+        fputcsv($output, ['FINANCIAL YEAR', 'FY ' . $ledger['fy_label']]);
+        fputcsv($output, []);
+        fputcsv($output, [
+            'Month',
+            'Opening Outstanding',
+            'Package / Service Purchase',
+            'Receipt',
+            'Total',
+            'Payment / Wallet Recovery',
+            'Balance',
+            'Panel Interest / Late Fee',
+            'Closing Outstanding'
+        ]);
+
+        foreach ($ledger['rows'] as $r) {
+            fputcsv($output, [
+                $r['month_label'],
+                $r['opening_outstanding'] > 0 ? ('-' . number_format($r['opening_outstanding'], 2, '.', '')) : '0.00',
+                number_format($r['purchase_amount'], 2, '.', ''),
+                number_format($r['receipt_amount'], 2, '.', ''),
+                $r['total'] > 0 ? ('-' . number_format($r['total'], 2, '.', '')) : '0.00',
+                number_format($r['wallet_recovery'], 2, '.', ''),
+                $r['balance'] > 0 ? ('-' . number_format($r['balance'], 2, '.', '')) : '0.00',
+                $r['panel_interest'] > 0 ? ('-' . number_format($r['panel_interest'], 2, '.', '')) : '0.00',
+                $r['closing_outstanding'] > 0 ? ('-' . number_format($r['closing_outstanding'], 2, '.', '')) : '0.00'
+            ]);
+        }
+
+        fputcsv($output, []);
+        fputcsv($output, [
+            'TOTAL',
+            '-',
+            number_format($ledger['summary']['total_purchases'], 2, '.', ''),
+            number_format($ledger['summary']['total_receipts'], 2, '.', ''),
+            '-',
+            number_format($ledger['summary']['total_recoveries'], 2, '.', ''),
+            '-',
+            number_format($ledger['summary']['total_interest'], 2, '.', ''),
+            $ledger['summary']['closing_outstanding'] > 0 ? ('-' . number_format($ledger['summary']['closing_outstanding'], 2, '.', '')) : '0.00'
+        ]);
+
+        fclose($output);
+    }
+
+    public function update()
     {
         if ($this->session->role != 'admin') {
-            echo json_encode(['status' => false, 'message' => 'Unauthorized']);
-            return;
+            redirect('creditlimit');
         }
 
         $customer_id = $this->input->post('customer_id');
         $credit_limit = $this->input->post('credit_limit');
         $credit_percent = $this->input->post('credit_percent');
 
-        if (!empty($customer_id)) {
-            $update_data = ['credit_limit' => $credit_limit];
-            if ($credit_percent !== NULL) {
-                $update_data['credit_percent'] = $credit_percent;
-            }
+        if ($customer_id) {
             $this->db->where('id', $customer_id);
-            $this->db->update('customers', $update_data);
-            echo json_encode(['status' => true, 'message' => 'Credit Limit updated successfully!']);
-        } else {
-            echo json_encode(['status' => false, 'message' => 'Invalid Customer']);
+            $this->db->update('customers', [
+                'credit_limit' => $credit_limit,
+                'credit_percent' => $credit_percent !== '' ? $credit_percent : null
+            ]);
+            $this->session->set_flashdata('msg', 'Credit limit updated successfully!');
         }
+
+        redirect('creditlimit');
     }
 }

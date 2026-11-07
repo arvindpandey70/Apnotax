@@ -9,6 +9,89 @@ class Credit_service
     {
         $this->CI = &get_instance();
         $this->CI->load->model('Wallet_model', 'wallet');
+        $this->ensure_tables_exist();
+    }
+
+    /**
+     * Auto-create required database tables if they do not exist
+     */
+    public function ensure_tables_exist()
+    {
+        $prefix = $this->CI->db->dbprefix;
+        
+        $this->CI->db->query("CREATE TABLE IF NOT EXISTS `{$prefix}credit_purchases` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `user_id` int(11) NOT NULL,
+            `purchase_id` int(11) DEFAULT NULL,
+            `service_id` int(11) DEFAULT 1,
+            `service_name` varchar(255) NOT NULL,
+            `purchase_date` date NOT NULL,
+            `purchase_amount` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `wallet_deduction` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `credit_used` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `interest_rate_percent` decimal(5,2) NOT NULL DEFAULT '4.00',
+            `due_date` date DEFAULT NULL,
+            `interest_start_date` date NOT NULL,
+            `outstanding_principal` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `recovered_principal` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `remaining_principal` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `interest_accrued` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `interest_recovered` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `remaining_interest` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `recovery_status` enum('Unpaid','Partially Recovered','Fully Recovered') NOT NULL DEFAULT 'Unpaid',
+            `last_calc_date` date DEFAULT NULL,
+            `created_at` datetime NOT NULL,
+            `updated_at` datetime NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `user_id` (`user_id`),
+            KEY `purchase_date` (`purchase_date`),
+            KEY `recovery_status` (`recovery_status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8;");
+
+        $this->CI->db->query("CREATE TABLE IF NOT EXISTS `{$prefix}credit_recovery_logs` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `user_id` int(11) NOT NULL,
+            `credit_purchase_id` int(11) NOT NULL,
+            `wallet_id` int(11) DEFAULT NULL,
+            `recovery_date` date NOT NULL,
+            `recovered_interest` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `recovered_principal` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `total_recovered` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `wallet_balance_before` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `wallet_balance_after` decimal(12,2) NOT NULL DEFAULT '0.00',
+            `remarks` varchar(255) DEFAULT NULL,
+            `created_at` datetime NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `user_id` (`user_id`),
+            KEY `credit_purchase_id` (`credit_purchase_id`),
+            KEY `recovery_date` (`recovery_date`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8;");
+    }
+
+    /**
+     * Safe query sum of column with check for table existence and null safety
+     */
+    public function get_sum($table, $sum_col, $where = [], $where_raw = null)
+    {
+        if (!$this->CI->db->table_exists($table)) {
+            return 0.00;
+        }
+
+        $this->CI->db->select_sum($sum_col);
+        if (!empty($where)) {
+            $this->CI->db->where($where);
+        }
+        if (!empty($where_raw)) {
+            $this->CI->db->where($where_raw, NULL, FALSE);
+        }
+        $q = $this->CI->db->get($table);
+        if ($q && is_object($q)) {
+            $row = $q->unbuffered_row();
+            if (!empty($row) && isset($row->$sum_col) && $row->$sum_col !== null) {
+                return (float)$row->$sum_col;
+            }
+        }
+        return 0.00;
     }
 
     /**
@@ -86,20 +169,21 @@ class Credit_service
         if ($user_id <= 0) return;
 
         // 1. From tf_purchases where type = 'Credit limit'
-        $purchases = $this->CI->db->select('id, date, amount, service, service_id, added_on, status')
-                                  ->where('user_id', $user_id)
-                                  ->where('type', 'Credit limit')
-                                  ->where('status >=', 0)
-                                  ->get('purchases')
-                                  ->result_array();
+        $q_purchases = $this->CI->db->select('id, date, amount, service, service_id, added_on, status')
+                                    ->where('user_id', $user_id)
+                                    ->where('type', 'Credit limit')
+                                    ->where('status >=', 0)
+                                    ->get('purchases');
+        $purchases = ($q_purchases && is_object($q_purchases)) ? $q_purchases->result_array() : [];
 
         $rate = $this->get_interest_rate($user_id);
 
         foreach ($purchases as $p) {
-            $exists = $this->CI->db->get_where('credit_purchases', [
+            $q_ex = $this->CI->db->get_where('credit_purchases', [
                 'user_id'     => $user_id,
                 'purchase_id' => $p['id']
-            ])->num_rows() > 0;
+            ]);
+            $exists = ($q_ex && is_object($q_ex) && $q_ex->num_rows() > 0);
 
             if (!$exists) {
                 $p_date = !empty($p['date']) ? $p['date'] : date('Y-m-d', strtotime($p['added_on']));
@@ -131,19 +215,20 @@ class Credit_service
         }
 
         // 2. From tf_acc_payment where payment_mode = 'Credit Limit' and status = 1
-        $acc_payments = $this->CI->db->select('id, date, amount, acc_date, added_on')
-                                     ->where('user_id', $user_id)
-                                     ->where('payment_mode', 'Credit Limit')
-                                     ->where('status', 1)
-                                     ->get('acc_payment')
-                                     ->result_array();
+        $q_acc = $this->CI->db->select('id, date, amount, acc_date, added_on')
+                              ->where('user_id', $user_id)
+                              ->where('payment_mode', 'Credit Limit')
+                              ->where('status', 1)
+                              ->get('acc_payment');
+        $acc_payments = ($q_acc && is_object($q_acc)) ? $q_acc->result_array() : [];
 
         foreach ($acc_payments as $ap) {
-            $exists = $this->CI->db->get_where('credit_purchases', [
+            $q_ex2 = $this->CI->db->get_where('credit_purchases', [
                 'user_id'     => $user_id,
                 'purchase_id' => $ap['id'],
                 'service_name LIKE' => 'Accountancy%'
-            ])->num_rows() > 0;
+            ]);
+            $exists = ($q_ex2 && is_object($q_ex2) && $q_ex2->num_rows() > 0);
 
             if (!$exists) {
                 $p_date = !empty($ap['date']) ? $ap['date'] : date('Y-m-d', strtotime($ap['added_on']));
@@ -275,9 +360,10 @@ class Credit_service
         // Fetch all recoveries for this specific purchase ordered by recovery_date ASC
         $recoveries = [];
         if (!empty($purchase_id)) {
-            $recoveries = $this->CI->db->order_by('recovery_date', 'ASC')->get_where('credit_recovery_logs', [
+            $q = $this->CI->db->order_by('recovery_date', 'ASC')->get_where('credit_recovery_logs', [
                 'credit_purchase_id' => $purchase_id
-            ])->result_array();
+            ]);
+            $recoveries = ($q && is_object($q)) ? $q->result_array() : [];
         }
 
         $total_interest_accrued = 0.00;
@@ -348,10 +434,10 @@ class Credit_service
         }
 
         $this->sync_existing_credit_purchases($user_id);
-        $purchases = $this->CI->db->where('user_id', $user_id)
-                                  ->where('purchase_date <=', $effective_end)
-                                  ->get('credit_purchases')
-                                  ->result_array();
+        $q_p = $this->CI->db->where('user_id', $user_id)
+                            ->where('purchase_date <=', $effective_end)
+                            ->get('credit_purchases');
+        $purchases = ($q_p && is_object($q_p)) ? $q_p->result_array() : [];
 
         if (empty($purchases)) {
             return 0.00;
@@ -365,10 +451,10 @@ class Credit_service
             $daily_rate = ($rate / 100.0) / 30.0;
 
             // Fetch recoveries for this purchase
-            $recoveries = $this->CI->db->where('credit_purchase_id', $p['id'])
-                                       ->order_by('recovery_date', 'ASC')
-                                       ->get('credit_recovery_logs')
-                                       ->result_array();
+            $q_rec = $this->CI->db->where('credit_purchase_id', $p['id'])
+                                  ->order_by('recovery_date', 'ASC')
+                                  ->get('credit_recovery_logs');
+            $recoveries = ($q_rec && is_object($q_rec)) ? $q_rec->result_array() : [];
 
             // Timeline of principal balances
             $timeline = [];
@@ -659,28 +745,15 @@ class Credit_service
                 $opening = $running_closing;
 
                 // Purchases in this month
-                $p_amt = (float)$this->CI->db->select_sum('credit_used')
-                                             ->where('user_id', $user_id)
-                                             ->where("DATE_FORMAT(purchase_date, '%Y-%m') =", $ym)
-                                             ->get('credit_purchases')
-                                             ->unbuffered_row()->credit_used;
+                $p_amt = $this->get_sum('credit_purchases', 'credit_used', ['user_id' => $user_id], "DATE_FORMAT(purchase_date, '%Y-%m') = '{$ym}'");
 
                 // Receipts in this month
-                $r_amt = (float)$this->CI->db->select_sum('amount')
-                                             ->where('user_id', $user_id)
-                                             ->where('type', 'receipt')
-                                             ->where("DATE_FORMAT(date, '%Y-%m') =", $ym)
-                                             ->get('credit_limit_ledger')
-                                             ->unbuffered_row()->amount;
+                $r_amt = $this->get_sum('credit_limit_ledger', 'amount', ['user_id' => $user_id, 'type' => 'receipt'], "DATE_FORMAT(date, '%Y-%m') = '{$ym}'");
 
                 $total = round($opening + $p_amt + $r_amt, 2);
 
                 // Recoveries in this month
-                $rec_amt = (float)$this->CI->db->select_sum('total_recovered')
-                                               ->where('user_id', $user_id)
-                                               ->where("DATE_FORMAT(recovery_date, '%Y-%m') =", $ym)
-                                               ->get('credit_recovery_logs')
-                                               ->unbuffered_row()->total_recovered;
+                $rec_amt = $this->get_sum('credit_recovery_logs', 'total_recovered', ['user_id' => $user_id], "DATE_FORMAT(recovery_date, '%Y-%m') = '{$ym}'");
 
                 $balance = round($total - $rec_amt, 2);
 
@@ -706,28 +779,15 @@ class Credit_service
             $opening = $running_closing;
 
             // Package / Service Purchases funded by credit in this month
-            $p_amt = (float)$this->CI->db->select_sum('credit_used')
-                                         ->where('user_id', $user_id)
-                                         ->where("DATE_FORMAT(purchase_date, '%Y-%m') =", $ym)
-                                         ->get('credit_purchases')
-                                         ->unbuffered_row()->credit_used;
+            $p_amt = $this->get_sum('credit_purchases', 'credit_used', ['user_id' => $user_id], "DATE_FORMAT(purchase_date, '%Y-%m') = '{$ym}'");
 
             // Manual Credit Receipts in this month
-            $r_amt = (float)$this->CI->db->select_sum('amount')
-                                         ->where('user_id', $user_id)
-                                         ->where('type', 'receipt')
-                                         ->where("DATE_FORMAT(date, '%Y-%m') =", $ym)
-                                         ->get('credit_limit_ledger')
-                                         ->unbuffered_row()->amount;
+            $r_amt = $this->get_sum('credit_limit_ledger', 'amount', ['user_id' => $user_id, 'type' => 'receipt'], "DATE_FORMAT(date, '%Y-%m') = '{$ym}'");
 
             $total = round($opening + $p_amt + $r_amt, 2);
 
             // Payment / Wallet Recovery in this month
-            $rec_amt = (float)$this->CI->db->select_sum('total_recovered')
-                                           ->where('user_id', $user_id)
-                                           ->where("DATE_FORMAT(recovery_date, '%Y-%m') =", $ym)
-                                           ->get('credit_recovery_logs')
-                                           ->unbuffered_row()->total_recovered;
+            $rec_amt = $this->get_sum('credit_recovery_logs', 'total_recovered', ['user_id' => $user_id], "DATE_FORMAT(recovery_date, '%Y-%m') = '{$ym}'");
 
             $balance = round($total - $rec_amt, 2);
 
@@ -794,11 +854,11 @@ class Credit_service
         $this->sync_existing_credit_purchases($user_id);
 
         // Fetch all credit purchases relevant to this month (purchased on or before month end, active during month)
-        $purchases = $this->CI->db->where('user_id', $user_id)
-                                  ->where('purchase_date <=', $m_end)
-                                  ->order_by('purchase_date', 'ASC')
-                                  ->get('credit_purchases')
-                                  ->result_array();
+        $q_p = $this->CI->db->where('user_id', $user_id)
+                            ->where('purchase_date <=', $m_end)
+                            ->order_by('purchase_date', 'ASC')
+                            ->get('credit_purchases');
+        $purchases = ($q_p && is_object($q_p)) ? $q_p->result_array() : [];
 
         $details = [];
         $today = date('Y-m-d');
@@ -810,10 +870,10 @@ class Credit_service
             $daily_rate = ($rate / 100.0) / 30.0;
 
             // Fetch recoveries
-            $recoveries = $this->CI->db->where('credit_purchase_id', $p['id'])
-                                       ->order_by('recovery_date', 'ASC')
-                                       ->get('credit_recovery_logs')
-                                       ->result_array();
+            $q_rec = $this->CI->db->where('credit_purchase_id', $p['id'])
+                                  ->order_by('recovery_date', 'ASC')
+                                  ->get('credit_recovery_logs');
+            $recoveries = ($q_rec && is_object($q_rec)) ? $q_rec->result_array() : [];
 
             $recovered_in_month_p = 0.00;
             $recovered_in_month_i = 0.00;
@@ -942,45 +1002,28 @@ class Credit_service
             $cur_date = sprintf('%s-%02d', $year_month, $day);
 
             // Purchases on this day
-            $p_amt = (float)$this->CI->db->select_sum('credit_used')
-                                  ->where('user_id', $user_id)
-                                  ->where('purchase_date', $cur_date)
-                                  ->get('credit_purchases')
-                                  ->unbuffered_row()->credit_used;
+            $p_amt = $this->get_sum('credit_purchases', 'credit_used', ['user_id' => $user_id, 'purchase_date' => $cur_date]);
 
             // Receipts on this day
-            $r_amt = (float)$this->CI->db->select_sum('amount')
-                                  ->where('user_id', $user_id)
-                                  ->where('type', 'receipt')
-                                  ->where('date', $cur_date)
-                                  ->get('credit_limit_ledger')
-                                  ->unbuffered_row()->amount;
+            $r_amt = $this->get_sum('credit_limit_ledger', 'amount', ['user_id' => $user_id, 'type' => 'receipt', 'date' => $cur_date]);
 
             $total = round($running_open + $p_amt + $r_amt, 2);
 
             // Recoveries on this day
-            $rec_amt = (float)$this->CI->db->select_sum('total_recovered')
-                                    ->where('user_id', $user_id)
-                                    ->where('recovery_date', $cur_date)
-                                    ->get('credit_recovery_logs')
-                                    ->unbuffered_row()->total_recovered;
+            $rec_amt = $this->get_sum('credit_recovery_logs', 'total_recovered', ['user_id' => $user_id, 'recovery_date' => $cur_date]);
 
             $balance = round($total - $rec_amt, 2);
 
             // Daily interest for active unpaid purchases on cur_date (including projected future days of month)
             $daily_interest = 0.00;
-            $active_purchases = $this->CI->db->where('user_id', $user_id)
-                                      ->where('purchase_date <=', $cur_date)
-                                      ->get('credit_purchases')
-                                      ->result_array();
+            $q_active = $this->CI->db->where('user_id', $user_id)
+                                     ->where('purchase_date <=', $cur_date)
+                                     ->get('credit_purchases');
+            $active_purchases = ($q_active && is_object($q_active)) ? $q_active->result_array() : [];
             foreach ($active_purchases as $p) {
                 $p_start = $p['interest_start_date'] ?? $p['purchase_date'];
                 if ($cur_date > $p_start) {
-                    $recs = $this->CI->db->select_sum('recovered_principal')
-                                  ->where('credit_purchase_id', $p['id'])
-                                  ->where('recovery_date <=', $cur_date)
-                                  ->get('credit_recovery_logs')
-                                  ->unbuffered_row()->recovered_principal;
+                    $recs = $this->get_sum('credit_recovery_logs', 'recovered_principal', ['credit_purchase_id' => $p['id']], "recovery_date <= '{$cur_date}'");
                     $unpaid_p = max(0.0, (float)$p['outstanding_principal'] - (float)$recs);
                     if ($unpaid_p > 0) {
                         $daily_interest += $unpaid_p * $daily_rate;

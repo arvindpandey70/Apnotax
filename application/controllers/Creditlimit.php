@@ -45,14 +45,16 @@ class Creditlimit extends CI_Controller
         if ($fy_start_year <= 2000) $fy_start_year = 2026;
 
         $user = getuser();
-        $customer = $this->db->get_where('customers', ['user_id' => $user['id']])->unbuffered_row('array');
+        $user_id = !empty($user['id']) ? (int)$user['id'] : (int)($this->session->user_id ?? 0);
+        $res_cust = $this->db->get_where('customers', ['user_id' => $user_id]);
+        $customer = ($res_cust && is_object($res_cust)) ? $res_cust->unbuffered_row('array') : [];
 
         $credit_limit = 0.00;
         if (!empty($customer) && isset($customer['credit_limit'])) {
             $credit_limit = (float)$customer['credit_limit'];
         }
 
-        $ledger = $this->credit_service->get_fy_credit_ledger($user['id'], $fy_start_year);
+        $ledger = $this->credit_service->get_fy_credit_ledger($user_id, $fy_start_year);
 
         $data['customer'] = $customer;
         $data['credit_limit'] = $credit_limit;
@@ -66,7 +68,8 @@ class Creditlimit extends CI_Controller
     public function month_details($year_month = null)
     {
         $user = getuser();
-        if (!$user) {
+        $user_id = !empty($user['id']) ? (int)$user['id'] : (int)($this->session->user_id ?? 0);
+        if (!$user_id) {
             echo json_encode(['status' => false, 'message' => 'Unauthorized']);
             return;
         }
@@ -75,7 +78,7 @@ class Creditlimit extends CI_Controller
             $year_month = $this->input->get('ym') ?: date('Y-m');
         }
 
-        $res = $this->credit_service->get_month_daily_ledger($user['id'], $year_month);
+        $res = $this->credit_service->get_month_daily_ledger($user_id, $year_month);
 
         header('Content-Type: application/json');
         echo json_encode($res);

@@ -687,3 +687,79 @@ if (!function_exists('ensure_accountancy_fy_months')) {
     }
 }
 
+
+
+if (!function_exists('calculate_accountancy_fee')) {
+    function calculate_accountancy_fee($package_name, $total_turnover)
+    {
+        $CI = &get_instance();
+        $packages = $CI->master->getpackages(array('name' => $package_name, 'status' => 1), 'all');
+        $regular_slabs = array();
+        $per_unit_slab = null;
+
+        foreach ($packages as $package) {
+            if (
+                !isset($package['turnover'], $package['rate'])
+                || !is_numeric($package['turnover'])
+                || !is_numeric($package['rate'])
+                || (float)$package['rate'] < 0
+            ) {
+                continue;
+            }
+
+            if (stripos(isset($package['remarks']) ? $package['remarks'] : '', 'Per 100 Lac') !== false) {
+                $per_unit_slab = $package;
+                continue;
+            }
+
+            if ((float)$package['turnover'] > 0) {
+                $regular_slabs[] = $package;
+            }
+        }
+
+        if (empty($regular_slabs)) {
+            return array(
+                'status' => true,
+                'package' => array('name' => $package_name),
+                'fees' => 0
+            );
+        }
+
+        usort($regular_slabs, function ($left, $right) {
+            return (float)$left['turnover'] <=> (float)$right['turnover'];
+        });
+
+        $selected_slab = end($regular_slabs);
+        foreach ($regular_slabs as $slab) {
+            if ($total_turnover < (float)$slab['turnover']) {
+                $selected_slab = $slab;
+                break;
+            }
+        }
+
+        $fees = $total_turnover > 0 ? (float)$selected_slab['rate'] : 0;
+        $highest_slab = end($regular_slabs);
+        $highest_slab_turnover = (float)$highest_slab['turnover'];
+
+        if ($total_turnover > $highest_slab_turnover) {
+            if (empty($per_unit_slab) || (float)$per_unit_slab['turnover'] <= 0) {
+                return array(
+                    'status' => true,
+                    'package' => array('name' => $package_name),
+                    'fees' => 0
+                );
+            }
+
+            $extra_turnover = $total_turnover - $highest_slab_turnover;
+            $fees = (float)$highest_slab['rate']
+                + ($extra_turnover / (float)$per_unit_slab['turnover']) * (float)$per_unit_slab['rate'];
+            $selected_slab = $per_unit_slab;
+        }
+
+        return array(
+            'status' => true,
+            'package' => $selected_slab,
+            'fees' => round($fees, 2)
+        );
+    }
+}

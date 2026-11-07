@@ -909,6 +909,11 @@ class Customers extends CI_Controller
             $this->load->model('Wallet_model', 'wallet');
             $data['credit_limit'] = $this->wallet->get_available_credit($user_id);
             $data['wallet_balance'] = $this->wallet->getwalletbalance($user_id);
+            $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
+            $data['customer'] = $customer;
+            $gst_enabled = !empty($customer) && !empty($customer['gst_enabled']) && $customer['gst_enabled'] == 1;
+            $data['gst_enabled'] = $gst_enabled;
+            $data['gst_rate'] = $gst_enabled ? 18.0 : 0.0;
             
             // Get package details (Active Package)
             $where = array('user_id' => $user_id, 'firm_id' => $firm_id, 'status' => 1);
@@ -929,7 +934,9 @@ class Customers extends CI_Controller
                 $turnover = array_sum($turnovers);
                 $data['total_turnover'] = $turnover;
                 $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-                $data['package'] = $this->master->getpackages(['name' => $name, 'turnover>' => $turnover], 'single');
+                $fee_data = calculate_accountancy_fee($name, $turnover);
+                $data['package'] = $fee_data['package'];
+                $data['package_fee'] = $fee_data['fees'];
             } else {
                 $data['accountancy'] = array();
             }

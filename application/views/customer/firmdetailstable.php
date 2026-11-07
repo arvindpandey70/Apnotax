@@ -64,7 +64,7 @@ if (!empty($cpackage)) {
     if (isset($cpackage['package_type']) && $cpackage['package_type'] == 'Monthly') {
         // Do not show the turnover table for Monthly packages
     } else {
-        $this->load->view('orders/acc_table', $data ?? []);
+        $this->load->view('orders/acc_table', get_defined_vars());
     }
 } else {
     echo '<h3 class="text-danger text-center mt-4">No Active Package Found For This Firm!</h3>';

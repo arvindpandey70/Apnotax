@@ -251,25 +251,67 @@ class Creditlimit extends CI_Controller
         fclose($output);
     }
 
+    private function save_customer_credit_limit()
+    {
+        $customer_id = (int)$this->input->post('customer_id');
+        $credit_limit = trim((string)$this->input->post('credit_limit'));
+        $credit_percent = trim((string)$this->input->post('credit_percent'));
+
+        if ($customer_id <= 0 || !is_numeric($credit_limit) || (float)$credit_limit < 0) {
+            return ['status' => false, 'message' => 'Enter a valid customer and credit limit.'];
+        }
+
+        if ($credit_percent !== '' && (!is_numeric($credit_percent) || (float)$credit_percent < 0)) {
+            return ['status' => false, 'message' => 'Enter a valid credit percentage or leave it blank.'];
+        }
+
+        $customer = $this->db->get_where('customers', ['id' => $customer_id])->row_array();
+        if (empty($customer)) {
+            return ['status' => false, 'message' => 'Customer not found.'];
+        }
+
+        $updated = $this->db->where('id', $customer_id)->update('customers', [
+            'credit_limit' => (float)$credit_limit,
+            'credit_percent' => $credit_percent !== '' ? (float)$credit_percent : null
+        ]);
+        if (!$updated) {
+            $error = $this->db->error();
+            log_message('error', 'Failed to update customer credit limit: ' . $error['message']);
+            return ['status' => false, 'message' => 'Unable to update credit limit. Please try again.'];
+        }
+
+        $user_id = (int)$customer['user_id'];
+        if ($user_id > 0) {
+            $this->load->library('auto_debit_service');
+            $this->auto_debit_service->process_user_pending_auto_debits($user_id);
+        }
+
+        return ['status' => true, 'message' => 'Credit limit updated successfully.'];
+    }
+
+    public function update_limit()
+    {
+        if ($this->session->role != 'admin') {
+            $this->output->set_status_header(403);
+            $result = ['status' => false, 'message' => 'Unauthorized.'];
+        } else {
+            $result = $this->save_customer_credit_limit();
+        }
+
+        $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($result));
+    }
+
     public function update()
     {
         if ($this->session->role != 'admin') {
             redirect('creditlimit');
+            return;
         }
 
-        $customer_id = $this->input->post('customer_id');
-        $credit_limit = $this->input->post('credit_limit');
-        $credit_percent = $this->input->post('credit_percent');
-
-        if ($customer_id) {
-            $this->db->where('id', $customer_id);
-            $this->db->update('customers', [
-                'credit_limit' => $credit_limit,
-                'credit_percent' => $credit_percent !== '' ? $credit_percent : null
-            ]);
-            $this->session->set_flashdata('msg', 'Credit limit updated successfully!');
-        }
-
+        $result = $this->save_customer_credit_limit();
+        $this->session->set_flashdata($result['status'] ? 'msg' : 'err_msg', $result['message']);
         redirect('creditlimit');
     }
 }

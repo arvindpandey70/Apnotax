@@ -625,17 +625,34 @@ class Package extends CI_Controller
         if ($package_id > 0) {
             $spkg = $this->db->get_where('service_packages', ['id' => $package_id, 'user_id' => $user['id']])->unbuffered_row('array');
             if (!empty($spkg)) {
-                $firm_id  = $spkg['firm_id'];
-                $year     = $spkg['year'];
+                $firm_id  = !empty($spkg['firm_id']) ? $spkg['firm_id'] : $firm_id;
+                $year     = !empty($spkg['year']) ? $spkg['year'] : $year;
                 $pkg_type = $spkg['package_type'] ?? '';
-                
-                $del_where = ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year];
+
+                // Find associated purchases for this service package
+                $this->db->select('id')
+                         ->where('user_id', $user['id'])
+                         ->where('firm_id', $firm_id)
+                         ->where('year', $year)
+                         ->where('service_id !=', 1);
                 if (!empty($pkg_type)) {
-                    $del_where['package_type'] = $pkg_type;
+                    $this->db->where('type', $pkg_type);
                 }
-                $this->db->delete('service_packages', $del_where);
-                // Also clean up associated purchases for service packages
-                $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id !=' => 1]);
+                $p_res = $this->db->get('purchases');
+                $p_ids = ($p_res && is_object($p_res)) ? array_column($p_res->result_array(), 'id') : [];
+
+                if (!empty($p_ids)) {
+                    $this->db->where('user_id', $user['id'])->where_in('purchase_id', $p_ids)->delete('credit_purchases');
+                    $this->db->where_in('id', $p_ids)->delete('purchases');
+                } else {
+                    $del_p = ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id !=' => 1];
+                    if (!empty($pkg_type)) {
+                        $del_p['type'] = $pkg_type;
+                    }
+                    $this->db->delete('purchases', $del_p);
+                }
+
+                $this->db->delete('service_packages', ['id' => $spkg['id']]);
 
                 $this->session->set_flashdata("msg", "Package deleted successfully!");
                 redirect($_SERVER['HTTP_REFERER'] ?? 'package/');
@@ -645,9 +662,22 @@ class Package extends CI_Controller
 
         $del_count = $this->db->get_where('service_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year])->num_rows();
         if ($del_count > 0) {
+            $p_res = $this->db->select('id')
+                              ->where('user_id', $user['id'])
+                              ->where('firm_id', $firm_id)
+                              ->where('year', $year)
+                              ->where('service_id !=', 1)
+                              ->get('purchases');
+            $p_ids = ($p_res && is_object($p_res)) ? array_column($p_res->result_array(), 'id') : [];
+
+            if (!empty($p_ids)) {
+                $this->db->where('user_id', $user['id'])->where_in('purchase_id', $p_ids)->delete('credit_purchases');
+                $this->db->where_in('id', $p_ids)->delete('purchases');
+            } else {
+                $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id !=' => 1]);
+            }
+
             $this->db->delete('service_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
-            // Also clean up associated purchases for service packages
-            $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id !=' => 1]);
             $this->session->set_flashdata("msg", "Package deleted successfully!");
         } else {
             $this->session->set_flashdata("err_msg", "Package not found!");
@@ -665,6 +695,21 @@ class Package extends CI_Controller
         $firm_id = $this->session->firm;
         $year    = $this->session->year;
 
+        $package_id = (int)$this->input->post('package_id');
+
+        // If package_id was provided, fetch the package to get accurate firm_id and year
+        if ($package_id > 0) {
+            $cpkg = $this->db->get_where('customer_packages', ['id' => $package_id, 'user_id' => $user['id']])->unbuffered_row('array');
+            if (!empty($cpkg)) {
+                if (!empty($cpkg['firm_id'])) {
+                    $firm_id = $cpkg['firm_id'];
+                }
+                if (!empty($cpkg['year'])) {
+                    $year = $cpkg['year'];
+                }
+            }
+        }
+
         $where_pkg = array(
             't1.user_id' => $user['id'],
             't1.firm_id' => $firm_id,
@@ -680,13 +725,138 @@ class Package extends CI_Controller
             return;
         }
 
+        // Determine the date range of the financial year
+        $fy = get_financial_year($year);
+        $start_date = !empty($fy['start']) ? $fy['start'] : '';
+        $end_date   = !empty($fy['end'])   ? $fy['end']   : '';
+        if (empty($start_date) && strlen((string)$year) == 8) {
+            $y1 = substr((string)$year, 0, 4);
+            $y2 = substr((string)$year, 4, 4);
+            $start_date = "$y1-04-01";
+            $end_date   = "$y2-03-31";
+        }
+
+        // Check if anything exists to delete
         $del_count = $this->db->get_where('customer_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year])->num_rows();
+        if ($package_id > 0) {
+            $del_count += $this->db->get_where('customer_packages', ['id' => $package_id, 'user_id' => $user['id']])->num_rows();
+        }
         $purchase_count = $this->db->get_where('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id' => 1])->num_rows();
-        if ($del_count > 0 || $purchase_count > 0) {
-            $this->db->delete('customer_packages', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
-            // Also clean up associated Account Work purchases
-            $this->db->delete('purchases', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year, 'service_id' => 1]);
-            $this->db->delete('acc_payment', ['user_id' => $user['id'], 'firm_id' => $firm_id, 'year' => $year]);
+
+        $acc_count = 0;
+        if (!empty($start_date) && !empty($end_date)) {
+            $acc_count = $this->db->where('user_id', $user['id'])
+                                  ->where('firm_id', $firm_id)
+                                  ->where('date >=', $start_date)
+                                  ->where('date <=', $end_date)
+                                  ->count_all_results('accountancy');
+        }
+
+        if ($del_count > 0 || $purchase_count > 0 || $acc_count > 0) {
+            // 1. Collect purchase IDs for Account Work to clean up related credit purchases
+            $this->db->select('id')
+                     ->where('user_id', $user['id'])
+                     ->where('firm_id', $firm_id);
+            if (!empty($year)) {
+                $this->db->where('year', $year);
+            }
+            $this->db->group_start()
+                     ->where('service_id', 1)
+                     ->or_like('service', 'Account Work')
+                     ->or_like('service', 'Accountancy')
+                     ->group_end();
+            $p_query = $this->db->get('purchases');
+            $purchase_ids = ($p_query && is_object($p_query)) ? array_column($p_query->result_array(), 'id') : [];
+
+            // 2. Collect acc_payment IDs for this year/firm/user
+            $this->db->select('id')
+                     ->where('user_id', $user['id'])
+                     ->where('firm_id', $firm_id);
+            if (!empty($start_date) && !empty($end_date)) {
+                $this->db->group_start()
+                         ->where('year', $year)
+                         ->or_group_start()
+                             ->where('acc_date >=', $start_date)
+                             ->where('acc_date <=', $end_date)
+                         ->group_end()
+                         ->group_end();
+            } else {
+                $this->db->where('year', $year);
+            }
+            $acc_p_query = $this->db->get('acc_payment');
+            $acc_payment_ids = ($acc_p_query && is_object($acc_p_query)) ? array_column($acc_p_query->result_array(), 'id') : [];
+
+            // 3. Delete from credit_purchases
+            if (!empty($purchase_ids)) {
+                $this->db->where('user_id', $user['id'])->where_in('purchase_id', $purchase_ids)->delete('credit_purchases');
+            }
+            if (!empty($acc_payment_ids)) {
+                $this->db->where('user_id', $user['id'])
+                         ->where_in('purchase_id', $acc_payment_ids)
+                         ->like('service_name', 'Accountancy')
+                         ->delete('credit_purchases');
+            }
+            if (!empty($start_date) && !empty($end_date)) {
+                $this->db->where('user_id', $user['id'])
+                         ->where('service_id', 1)
+                         ->group_start()
+                             ->where('purchase_date >=', $start_date)
+                             ->where('purchase_date <=', $end_date)
+                             ->or_group_start()
+                                 ->where('due_date >=', $start_date)
+                                 ->where('due_date <=', $end_date)
+                             ->group_end()
+                         ->group_end()
+                         ->delete('credit_purchases');
+            }
+
+            // 4. Delete from acc_payment
+            $this->db->where('user_id', $user['id'])
+                     ->where('firm_id', $firm_id);
+            if (!empty($start_date) && !empty($end_date)) {
+                $this->db->group_start()
+                         ->where('year', $year)
+                         ->or_group_start()
+                             ->where('acc_date >=', $start_date)
+                             ->where('acc_date <=', $end_date)
+                         ->group_end()
+                         ->group_end();
+            } else {
+                $this->db->where('year', $year);
+            }
+            $this->db->delete('acc_payment');
+
+            // 5. Delete from accountancy
+            $this->db->where('user_id', $user['id'])->where('firm_id', $firm_id);
+            if (!empty($start_date) && !empty($end_date)) {
+                $this->db->where('date >=', $start_date)->where('date <=', $end_date);
+            }
+            $this->db->delete('accountancy');
+
+            // 6. Delete from purchases (service_id = 1 or Account Work)
+            if (!empty($purchase_ids)) {
+                $this->db->where_in('id', $purchase_ids)->delete('purchases');
+            } else {
+                $this->db->where('user_id', $user['id'])
+                         ->where('firm_id', $firm_id)
+                         ->where('year', $year)
+                         ->group_start()
+                             ->where('service_id', 1)
+                             ->or_like('service', 'Account Work')
+                             ->or_like('service', 'Accountancy')
+                         ->group_end()
+                         ->delete('purchases');
+            }
+
+            // 7. Delete from customer_packages
+            if ($package_id > 0) {
+                $this->db->where('id', $package_id)->where('user_id', $user['id'])->delete('customer_packages');
+            }
+            $this->db->where('user_id', $user['id'])
+                     ->where('firm_id', $firm_id)
+                     ->where('year', $year)
+                     ->delete('customer_packages');
+
             $this->session->set_flashdata("msg", "Account Work Package deleted successfully!");
         } else {
             $this->session->set_flashdata("err_msg", "Account Work Package not found!");

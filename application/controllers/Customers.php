@@ -822,9 +822,80 @@ class Customers extends CI_Controller
                 $request = $status == 1 ? 1 : 2;
 
                 if ($status == 1) {
-                    // Approve: Delete the package (set status to 0)
-                    logupdateoperations('customer_packages', ['request' => $request, 'status' => 0], ['id' => $package['id']]);
-                    $result = $this->db->update('customer_packages', ['request' => $request, 'status' => 0], ['id' => $package['id']]);
+                    // Approve: Hard delete package and related database records
+                    $p_uid  = $package['user_id'];
+                    $p_fid  = $package['firm_id'];
+                    $p_year = $package['year'];
+
+                    $fy = get_financial_year($p_year);
+                    $start_date = !empty($fy['start']) ? $fy['start'] : '';
+                    $end_date   = !empty($fy['end'])   ? $fy['end']   : '';
+                    if (empty($start_date) && strlen((string)$p_year) == 8) {
+                        $y1 = substr((string)$p_year, 0, 4);
+                        $y2 = substr((string)$p_year, 4, 4);
+                        $start_date = "$y1-04-01";
+                        $end_date   = "$y2-03-31";
+                    }
+
+                    // 1. Purchase IDs
+                    $this->db->select('id')->where('user_id', $p_uid)->where('firm_id', $p_fid);
+                    if (!empty($p_year)) { $this->db->where('year', $p_year); }
+                    $this->db->group_start()->where('service_id', 1)->or_like('service', 'Account Work')->or_like('service', 'Accountancy')->group_end();
+                    $p_query = $this->db->get('purchases');
+                    $purchase_ids = ($p_query && is_object($p_query)) ? array_column($p_query->result_array(), 'id') : [];
+
+                    // 2. Acc Payment IDs
+                    $this->db->select('id')->where('user_id', $p_uid)->where('firm_id', $p_fid);
+                    if (!empty($start_date) && !empty($end_date)) {
+                        $this->db->group_start()->where('year', $p_year)->or_group_start()->where('acc_date >=', $start_date)->where('acc_date <=', $end_date)->group_end()->group_end();
+                    } else {
+                        $this->db->where('year', $p_year);
+                    }
+                    $acc_p_query = $this->db->get('acc_payment');
+                    $acc_payment_ids = ($acc_p_query && is_object($acc_p_query)) ? array_column($acc_p_query->result_array(), 'id') : [];
+
+                    // 3. Delete credit_purchases
+                    if (!empty($purchase_ids)) {
+                        $this->db->where('user_id', $p_uid)->where_in('purchase_id', $purchase_ids)->delete('credit_purchases');
+                    }
+                    if (!empty($acc_payment_ids)) {
+                        $this->db->where('user_id', $p_uid)->where_in('purchase_id', $acc_payment_ids)->like('service_name', 'Accountancy')->delete('credit_purchases');
+                    }
+                    if (!empty($start_date) && !empty($end_date)) {
+                        $this->db->where('user_id', $p_uid)->where('service_id', 1)
+                                 ->group_start()->where('purchase_date >=', $start_date)->where('purchase_date <=', $end_date)->or_group_start()->where('due_date >=', $start_date)->where('due_date <=', $end_date)->group_end()->group_end()
+                                 ->delete('credit_purchases');
+                    }
+
+                    // 4. Delete acc_payment
+                    $this->db->where('user_id', $p_uid)->where('firm_id', $p_fid);
+                    if (!empty($start_date) && !empty($end_date)) {
+                        $this->db->group_start()->where('year', $p_year)->or_group_start()->where('acc_date >=', $start_date)->where('acc_date <=', $end_date)->group_end()->group_end();
+                    } else {
+                        $this->db->where('year', $p_year);
+                    }
+                    $this->db->delete('acc_payment');
+
+                    // 5. Delete accountancy
+                    $this->db->where('user_id', $p_uid)->where('firm_id', $p_fid);
+                    if (!empty($start_date) && !empty($end_date)) {
+                        $this->db->where('date >=', $start_date)->where('date <=', $end_date);
+                    }
+                    $this->db->delete('accountancy');
+
+                    // 6. Delete purchases
+                    if (!empty($purchase_ids)) {
+                        $this->db->where_in('id', $purchase_ids)->delete('purchases');
+                    } else {
+                        $this->db->where('user_id', $p_uid)->where('firm_id', $p_fid)->where('year', $p_year)
+                                 ->group_start()->where('service_id', 1)->or_like('service', 'Account Work')->or_like('service', 'Accountancy')->group_end()
+                                 ->delete('purchases');
+                    }
+
+                    // 7. Delete customer_packages
+                    $this->db->where('id', $package['id'])->delete('customer_packages');
+                    $this->db->where('user_id', $p_uid)->where('firm_id', $p_fid)->where('year', $p_year)->delete('customer_packages');
+                    $result = true;
                 } else {
                     // Reject: Just update request to 2
                     logupdateoperations('customer_packages', ['request' => $request], ['id' => $package['id']]);

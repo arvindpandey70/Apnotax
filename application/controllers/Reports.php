@@ -103,12 +103,12 @@ class Reports extends CI_Controller
         $where_firm = array('user_id' => $user_id, 'firm_id' => $firm_id, 'year' => $year, 'status' => 1);
         $query = $this->db->get_where('customer_packages', $where_firm);
         if ($query->num_rows() == 0) {
-            $where_fallback = array('user_id' => $user_id, 'status' => 1);
+            $where_fallback = array('user_id' => $user_id, 'year' => $year, 'status' => 1);
             $query = $this->db->get_where('customer_packages', $where_fallback);
         }
 
         if ($query->num_rows() == 0) {
-            return array('status' => false, 'message' => 'Package not Active!', 'redirect' => 'home/');
+            return array('status' => false, 'message' => 'Package not Active!', 'redirect' => 'package/');
         }
 
         $cpackage = $query->unbuffered_row('array');

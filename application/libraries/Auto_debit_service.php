@@ -211,10 +211,16 @@ class Auto_debit_service
         $billing_period = date('Ym', strtotime($pkg['expiry_date']));
 
         // Check idempotency: Ensure this specific billing period for this service package hasn't already been charged
-        $dup_check = $this->CI->db->query(
-            "SELECT id FROM purchases WHERE user_id = ? AND firm_id = ? AND service_id IN ('" . implode("','", $s_ids) . "') AND period_value = ?",
-            array($user_id, $firm_id, $billing_period)
-        );
+        $dup_check = $this->CI->db
+            ->select('id')
+            ->from('purchases')
+            ->where([
+                'user_id' => $user_id,
+                'firm_id' => $firm_id,
+                'period_value' => $billing_period
+            ])
+            ->where_in('service_id', $s_ids)
+            ->get();
         if ($dup_check && $dup_check->num_rows() > 0) {
             // Already charged for this period, update expiry date forward to prevent stuck loop
             $new_expiry = $this->calculate_next_billing_date($pkg['expiry_date'], $package_type);
@@ -449,10 +455,12 @@ class Auto_debit_service
         $billing_period = date('Ym', strtotime($pkg['expiry_date']));
 
         // Check idempotency: Ensure this specific billing period for Account Work hasn't been charged yet
-        $dup_check = $this->CI->db->query(
-            "SELECT id FROM purchases WHERE user_id = ? AND firm_id = ? AND service_id = 1 AND period_value = ?",
-            array($user_id, $firm_id, $billing_period)
-        );
+        $dup_check = $this->CI->db->get_where('purchases', [
+            'user_id' => $user_id,
+            'firm_id' => $firm_id,
+            'service_id' => 1,
+            'period_value' => $billing_period
+        ]);
         if ($dup_check && $dup_check->num_rows() > 0) {
             $new_expiry = $this->calculate_next_billing_date($pkg['expiry_date'], 'Monthly');
             $this->CI->db->update('customer_packages', [
@@ -709,7 +717,11 @@ class Auto_debit_service
         $to   = $yearval['year2'] . "-03-31";
 
         // Fetch active customer package for turnover type
-        $cpackage = $this->CI->db->get_where('customer_packages', ['user_id' => $user_id, 'status' => 1])->unbuffered_row('array');
+        $cpackage = $this->CI->db->get_where('customer_packages', [
+            'user_id' => $user_id,
+            'firm_id' => $firm_id,
+            'status' => 1
+        ])->unbuffered_row('array');
         if (empty($cpackage)) {
             return array('status' => false, 'message' => 'No active customer package.');
         }
@@ -779,10 +791,15 @@ class Auto_debit_service
         // Idempotency check: Ensure acc_payment row doesn't already exist for this user, firm, month, and year
         $m_val = (int)date('m', strtotime($acc_date));
         $y_val = (int)date('Y', strtotime($acc_date));
-        $existing_acc_payment = $this->CI->db->query(
-            "SELECT id FROM acc_payment WHERE user_id = ? AND firm_id = ? AND MONTH(acc_date) = ? AND YEAR(acc_date) = ? AND status = 1",
-            array($user_id, $firm_id, $m_val, $y_val)
-        );
+        $existing_acc_payment = $this->CI->db
+            ->select('id')
+            ->from('acc_payment')
+            ->where('user_id', $user_id)
+            ->where('firm_id', $firm_id)
+            ->where('status', 1)
+            ->where('MONTH(acc_date) = ' . (int)$m_val, null, false)
+            ->where('YEAR(acc_date) = ' . (int)$y_val, null, false)
+            ->get();
         if ($existing_acc_payment && $existing_acc_payment->num_rows() > 0) {
             $this->CI->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $acct_row['id']]);
             return array('status' => true, 'message' => 'Turnover payment already recorded.');

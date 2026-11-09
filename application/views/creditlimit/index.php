@@ -626,10 +626,9 @@
                                         <tr>
                                             <th style="width: 110px;">Date</th>
                                             <th class="text-end">Opening Outstanding</th>
-                                            <th class="text-end">Package / Service</th>
-                                            <th class="text-end">Receipt</th>
+                                            <th class="text-end">Payment Again Services</th>
                                             <th class="text-end">Total</th>
-                                            <th class="text-end">Payment / Recovery</th>
+                                            <th class="text-end">Receipt from Wallet Payment</th>
                                             <th class="text-end">Balance</th>
                                             <th class="text-end">Panel Interest</th>
                                             <th class="text-end">Closing Total</th>
@@ -750,9 +749,6 @@ document.addEventListener('DOMContentLoaded', function () {
                                         </td>
                                         <td class="text-end">
                                             ${d.purchase > 0 ? '<span class="text-danger fw-bold">₹ ' + parseFloat(d.purchase).toFixed(2) + '</span>' : '<span class="dash-cell">-</span>'}
-                                        </td>
-                                        <td class="text-end">
-                                            ${d.receipt > 0 ? '<span class="text-info fw-bold">₹ ' + parseFloat(d.receipt).toFixed(2) + '</span>' : '<span class="dash-cell">-</span>'}
                                         </td>
                                         <td class="text-end fw-bold ${d.total > 0 ? 'text-danger' : 'text-dark'}">
                                             ${d.total > 0 ? '- ₹ ' + parseFloat(d.total).toFixed(2) : '₹ 0.00'}

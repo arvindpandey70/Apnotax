@@ -450,21 +450,23 @@
                             <tr>
                                 <th class="text-center" style="width: 110px;">Month</th>
                                 <th class="text-end">Opening Outstanding</th>
-                                <th class="text-end">Package / Service Purchase</th>
-                                <th class="text-end">Receipt</th>
+                                <th class="text-end">Payment Against Services</th>
                                 <th class="text-end">Total</th>
-                                <th class="text-end">Payment / Wallet Recovery</th>
+                                <th class="text-end">Receipt from Wallet Payment</th>
                                 <th class="text-end">Balance</th>
-                                <th class="text-end">Panel Interest / Late Fee</th>
-                                <th class="text-end" style="width: 135px;">Closing Outstanding</th>
+                                <th class="text-end">Panel Interest</th>
+                                <th class="text-end" style="width: 135px;">Closing Total</th>
                                 <th class="text-center" style="width: 75px;">View</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (!empty($ledger['rows'])): ?>
                                 <?php foreach ($ledger['rows'] as $r): ?>
-                                    <?php 
-                                        $has_activity = ($r['purchase_amount'] > 0 || $r['receipt_amount'] > 0 || $r['wallet_recovery'] > 0 || $r['panel_interest'] > 0);
+                                    <?php
+                                        $receipt_from_wallet = isset($r['total_recovery'])
+                                            ? (float)$r['total_recovery']
+                                            : round((float)$r['wallet_recovery'] + (float)$r['receipt_amount'], 2);
+                                        $has_activity = ($r['purchase_amount'] > 0 || $receipt_from_wallet > 0 || $r['panel_interest'] > 0);
                                     ?>
                                     <tr class="<?= $has_activity ? 'row-active-activity' : '' ?>">
                                         <td class="text-center fw-bold text-dark" style="font-size: 12px;">
@@ -479,14 +481,11 @@
                                         <td class="text-end <?= ($r['purchase_amount'] > 0) ? 'text-danger fw-bolder' : 'text-muted' ?>">
                                             <?= ($r['purchase_amount'] > 0) ? '₹ ' . number_format($r['purchase_amount'], 2) : '-' ?>
                                         </td>
-                                        <td class="text-end <?= ($r['receipt_amount'] > 0) ? 'text-info fw-bolder' : 'text-muted' ?>">
-                                            <?= ($r['receipt_amount'] > 0) ? '₹ ' . number_format($r['receipt_amount'], 2) : '-' ?>
-                                        </td>
                                         <td class="text-end fw-bold <?= ($r['total'] > 0) ? 'text-danger' : '' ?>" style="color: #1e293b;">
                                             <?= ($r['total'] > 0) ? '- ₹ ' . number_format($r['total'], 2) : '₹ 0.00' ?>
                                         </td>
-                                        <td class="text-end <?= ($r['wallet_recovery'] > 0) ? 'text-success fw-bolder' : 'text-muted' ?>">
-                                            <?= ($r['wallet_recovery'] > 0) ? '+ ₹ ' . number_format($r['wallet_recovery'], 2) : '-' ?>
+                                        <td class="text-end <?= ($receipt_from_wallet > 0) ? 'text-success fw-bolder' : 'text-muted' ?>">
+                                            <?= ($receipt_from_wallet > 0) ? '+ ₹ ' . number_format($receipt_from_wallet, 2) : '-' ?>
                                         </td>
                                         <td class="text-end <?= ($r['balance'] > 0) ? 'text-danger fw-bolder' : 'text-muted' ?>">
                                             <?= ($r['balance'] > 0) ? '- ₹ ' . number_format($r['balance'], 2) : '-' ?>
@@ -507,18 +506,22 @@
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="10" class="text-center py-4 text-muted fw-bold">No ledger records available for this financial year.</td>
+                                    <td colspan="9" class="text-center py-4 text-muted fw-bold">No ledger records available for this financial year.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
+                        <?php
+                            $summary_recoveries = isset($ledger['summary']['combined_recoveries'])
+                                ? (float)$ledger['summary']['combined_recoveries']
+                                : round((float)$ledger['summary']['total_recoveries'] + (float)$ledger['summary']['total_receipts'], 2);
+                        ?>
                         <tfoot>
                             <tr>
                                 <th class="text-center">TOTAL</th>
                                 <th class="text-end">-</th>
                                 <th class="text-end text-danger">₹ <?= number_format($ledger['summary']['total_purchases'], 2) ?></th>
-                                <th class="text-end text-info">₹ <?= number_format($ledger['summary']['total_receipts'], 2) ?></th>
                                 <th class="text-end">-</th>
-                                <th class="text-end text-success">₹ <?= number_format($ledger['summary']['total_recoveries'], 2) ?></th>
+                                <th class="text-end text-success">₹ <?= number_format($summary_recoveries, 2) ?></th>
                                 <th class="text-end">-</th>
                                 <th class="text-end text-warning">₹ <?= number_format($ledger['summary']['total_interest'], 2) ?></th>
                                 <th class="text-end text-danger">₹ <?= number_format($ledger['summary']['closing_outstanding'], 2) ?></th>

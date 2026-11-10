@@ -264,6 +264,12 @@ class Login extends CI_Controller {
 		$data['emp_id']=$result['emp_id'];
 		$data['role']=$result['role'];
 		$data['project']=PROJECT_NAME;
+		if($result['role']=='customer'){
+			$current_fy=get_financial_year();
+			if(!empty($current_fy['id'])){
+				$data['year']=$current_fy['id'];
+			}
+		}
 		$this->session->set_userdata($data);
 	}
 	

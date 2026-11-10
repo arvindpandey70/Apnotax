@@ -13,7 +13,8 @@
     }
 </style>
 <?php
-$year = '20242025';
+$current_fy = get_financial_year();
+$year = (!empty($current_fy['id']) && isset($years[$current_fy['id']])) ? $current_fy['id'] : '';
 if ($this->session->flashdata('user_id') !== NULL) {
     $user_id = $this->session->flashdata('user_id');
 }

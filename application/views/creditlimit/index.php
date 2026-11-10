@@ -626,7 +626,7 @@
                                         <tr>
                                             <th style="width: 110px;">Date</th>
                                             <th class="text-end">Opening Outstanding</th>
-                                            <th class="text-end">Payment Again Services</th>
+                                            <th class="text-end">Payment Against Services</th>
                                             <th class="text-end">Total</th>
                                             <th class="text-end">Receipt from Wallet Payment</th>
                                             <th class="text-end">Balance</th>

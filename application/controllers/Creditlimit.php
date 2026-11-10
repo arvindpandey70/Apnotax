@@ -15,21 +15,83 @@ class Creditlimit extends CI_Controller
     {
         $data = ['title' => 'Credit Limit'];
         $data['breadcrumb'] = array("active" => "Credit Limit");
-        $data['datatable'] = true;
 
         if ($this->session->role == 'admin') {
+            $data['datatable'] = true;
             $query = $this->db->select('t1.id as customer_id, t1.name, t1.mobile, t1.email, t1.credit_limit, t1.credit_percent, t1.user_id')
                                ->from('customers as t1')
                                ->get();
             $data['customers'] = ($query && is_object($query)) ? $query->result_array() : [];
 
-            // Calculate used credit, tax, total used, and available credit for all customers
+            // Batch-aggregate credit usage across all customers in fixed queries (avoids N+1 slowdown)
             if (!empty($data['customers'])) {
+                $purchases_map = [];
+                $q_pur = $this->db->select('user_id, COALESCE(SUM(amount), 0) as amt', false)
+                                  ->from('purchases')
+                                  ->where('type', 'Credit limit')
+                                  ->where('status >=', 0)
+                                  ->group_by('user_id')
+                                  ->get();
+                if ($q_pur && is_object($q_pur)) {
+                    foreach ($q_pur->result_array() as $row) {
+                        $purchases_map[(int)$row['user_id']] = (float)$row['amt'];
+                    }
+                }
+
+                $acc_map = [];
+                $q_acc = $this->db->select('user_id, COALESCE(SUM(amount), 0) as amt', false)
+                                  ->from('acc_payment')
+                                  ->where(['payment_mode' => 'Credit Limit', 'status' => 1])
+                                  ->group_by('user_id')
+                                  ->get();
+                if ($q_acc && is_object($q_acc)) {
+                    foreach ($q_acc->result_array() as $row) {
+                        $acc_map[(int)$row['user_id']] = (float)$row['amt'];
+                    }
+                }
+
+                $ledger_pay_map = [];
+                $ledger_rec_map = [];
+                $q_led = $this->db->select('user_id, type, COALESCE(SUM(amount), 0) as amt', false)
+                                  ->from('credit_limit_ledger')
+                                  ->group_by(['user_id', 'type'])
+                                  ->get();
+                if ($q_led && is_object($q_led)) {
+                    foreach ($q_led->result_array() as $row) {
+                        $uid = (int)$row['user_id'];
+                        if ($row['type'] === 'receipt') {
+                            $ledger_rec_map[$uid] = (float)$row['amt'];
+                        } elseif ($row['type'] === 'payment') {
+                            $ledger_pay_map[$uid] = (float)$row['amt'];
+                        }
+                    }
+                }
+
+                $global_percent = 0.00;
+                $q_glob = $this->db->get_where('credit_limit_percentage', ['status' => 1]);
+                if ($q_glob && is_object($q_glob)) {
+                    $glob = $q_glob->unbuffered_row('array');
+                    if (!empty($glob) && isset($glob['percent'])) {
+                        $global_percent = (float)$glob['percent'];
+                    }
+                }
+
                 foreach ($data['customers'] as $key => $cust) {
-                    $data['customers'][$key]['used_credit'] = $this->wallet->get_used_credit($cust['user_id']);
-                    $data['customers'][$key]['tax_amount'] = $this->wallet->get_used_credit_tax($cust['user_id']);
-                    $data['customers'][$key]['total_used'] = $this->wallet->get_total_used_credit_with_tax($cust['user_id']);
-                    $data['customers'][$key]['effective_percent'] = $this->wallet->get_credit_percent($cust['user_id']);
+                    $uid = (int)$cust['user_id'];
+                    $used = ($purchases_map[$uid] ?? 0.0)
+                          + ($acc_map[$uid] ?? 0.0)
+                          + ($ledger_pay_map[$uid] ?? 0.0)
+                          - ($ledger_rec_map[$uid] ?? 0.0);
+                    $used_credit = max(0.00, round($used, 2));
+                    $pct = (isset($cust['credit_percent']) && $cust['credit_percent'] !== '' && $cust['credit_percent'] !== null)
+                        ? (float)$cust['credit_percent']
+                        : $global_percent;
+                    $tax = round(($used_credit * $pct) / 100, 2);
+
+                    $data['customers'][$key]['used_credit'] = $used_credit;
+                    $data['customers'][$key]['tax_amount'] = $tax;
+                    $data['customers'][$key]['total_used'] = round($used_credit + $tax, 2);
+                    $data['customers'][$key]['effective_percent'] = $pct;
                 }
             }
 

@@ -6,6 +6,9 @@
                             if($this->session->role=='customer'){
                                 $sess_years=year_dropdown();
                                 $sess_firms=firm_dropdown();
+                                $current_fy=get_financial_year();
+                                $default_year=(!empty($current_fy['id']) && isset($sess_years[$current_fy['id']])) ? $current_fy['id'] : '';
+                                $selected_year=!empty($this->session->year) ? $this->session->year : $default_year;
                             ?>
                             <div>
                                 <?php if (isset($title) && $title === 'My Package'): ?>
@@ -44,7 +47,7 @@
                                         <div class="modal-body">
                                             <div class="row">
                                                 <div class="col-12">
-                                                    <?= create_form_input('select','','Year',false,$this->session->year??'',['id'=>'sess_year'],$sess_years); ?>
+                                                    <?= create_form_input('select','','Year',false,$selected_year,['id'=>'sess_year'],$sess_years); ?>
                                                 </div>
                                                 <div class="col-12">
                                                     <?php

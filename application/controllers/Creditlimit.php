@@ -274,37 +274,42 @@ class Creditlimit extends CI_Controller
         fputcsv($output, [
             'Month',
             'Opening Outstanding',
-            'Package / Service Purchase',
-            'Receipt',
+            'Payment Against Services',
             'Total',
-            'Payment / Wallet Recovery',
+            'Receipt from Wallet Payment',
             'Balance',
-            'Panel Interest / Late Fee',
-            'Closing Outstanding'
+            'Panel Interest',
+            'Closing Total'
         ]);
 
         foreach ($ledger['rows'] as $r) {
+            $receipt_from_wallet = isset($r['total_recovery'])
+                ? (float)$r['total_recovery']
+                : round((float)$r['wallet_recovery'] + (float)$r['receipt_amount'], 2);
+
             fputcsv($output, [
                 $r['month_label'],
                 $r['opening_outstanding'] > 0 ? ('-' . number_format($r['opening_outstanding'], 2, '.', '')) : '0.00',
                 number_format($r['purchase_amount'], 2, '.', ''),
-                number_format($r['receipt_amount'], 2, '.', ''),
                 $r['total'] > 0 ? ('-' . number_format($r['total'], 2, '.', '')) : '0.00',
-                number_format($r['wallet_recovery'], 2, '.', ''),
+                number_format($receipt_from_wallet, 2, '.', ''),
                 $r['balance'] > 0 ? ('-' . number_format($r['balance'], 2, '.', '')) : '0.00',
                 $r['panel_interest'] > 0 ? ('-' . number_format($r['panel_interest'], 2, '.', '')) : '0.00',
                 $r['closing_outstanding'] > 0 ? ('-' . number_format($r['closing_outstanding'], 2, '.', '')) : '0.00'
             ]);
         }
 
+        $summary_recoveries = isset($ledger['summary']['combined_recoveries'])
+            ? (float)$ledger['summary']['combined_recoveries']
+            : round((float)$ledger['summary']['total_recoveries'] + (float)$ledger['summary']['total_receipts'], 2);
+
         fputcsv($output, []);
         fputcsv($output, [
             'TOTAL',
             '-',
             number_format($ledger['summary']['total_purchases'], 2, '.', ''),
-            number_format($ledger['summary']['total_receipts'], 2, '.', ''),
             '-',
-            number_format($ledger['summary']['total_recoveries'], 2, '.', ''),
+            number_format($summary_recoveries, 2, '.', ''),
             '-',
             number_format($ledger['summary']['total_interest'], 2, '.', ''),
             $ledger['summary']['closing_outstanding'] > 0 ? ('-' . number_format($ledger['summary']['closing_outstanding'], 2, '.', '')) : '0.00'

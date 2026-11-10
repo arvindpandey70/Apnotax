@@ -990,9 +990,10 @@ class Credit_service
             $p_amt   = round(($sources['purchases_by_ym'][$ym] ?? 0.0) + ($sources['ledger_payments_by_ym'][$ym] ?? 0.0), 2);
             $r_amt   = round($sources['ledger_receipts_by_ym'][$ym] ?? 0.0, 2);
             $rec_amt = round($sources['recoveries_by_ym'][$ym] ?? 0.0, 2);
+            $combined_recovery = round($rec_amt + $r_amt, 2);
 
             $total = round($opening + $p_amt, 2);
-            $raw_balance = round($total - $r_amt - $rec_amt, 2);
+            $raw_balance = round($total - $combined_recovery, 2);
 
             $interest = 0.00;
             $effective_end = ($m_end < $today) ? $m_end : $today;
@@ -1021,6 +1022,7 @@ class Credit_service
                 'receipt_amount'      => $r_amt,
                 'total'               => $total,
                 'wallet_recovery'     => $rec_amt,
+                'total_recovery'      => $combined_recovery,
                 'balance'             => max(0.00, $raw_balance),
                 'panel_interest'      => $interest,
                 'closing_outstanding' => $closing,
@@ -1063,6 +1065,7 @@ class Credit_service
                 'total_purchases'     => round($total_purchases, 2),
                 'total_receipts'      => round($total_receipts, 2),
                 'total_recoveries'    => round($total_recoveries, 2),
+                'combined_recoveries' => round($total_recoveries + $total_receipts, 2),
                 'total_interest'      => round($total_interest, 2),
                 'closing_outstanding' => $running_closing
             ],

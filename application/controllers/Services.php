@@ -80,6 +80,7 @@ class Services extends CI_Controller
         $year    = $this->session->year;
         $where = array();
         $services = $this->master->getservices($where);
+        $this->master->ensure_default_service_options($services);
 
         // Load service options for services that have dynamic options
         if (!empty($services)) {
@@ -129,7 +130,7 @@ class Services extends CI_Controller
             return;
         }
 
-        $options = $this->master->getserviceoptions(array('service_id' => $service_id, 'status' => 1), 'all');
+        $options = $this->master->get_active_service_options($service_id);
         $pricing = array();
         $display_names = array();
 

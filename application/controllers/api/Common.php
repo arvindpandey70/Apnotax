@@ -24,6 +24,7 @@ class Common extends RestController
 
                 $where = ['status' => 1];
                 $services = $this->master->getservices($where);
+                $this->master->ensure_default_service_options($services);
 
                 if (!empty($services)) {
                     // Load service options for services that have dynamic options (like website)

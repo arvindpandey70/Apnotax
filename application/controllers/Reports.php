@@ -825,8 +825,19 @@ class Reports extends CI_Controller
         $where = array('t1.user_id' => $user['id'], 't1.firm_id' => $firm_id, 't1.date>=' => $years['year1'] . '-04-01', 't1.date<=' => $years['year2'] . '-03-31');
         $purchases_db = $this->service->getpurchases($where);
 
+        // Fetch Monthly Account Work packages first so upfront combined purchase rows don't duplicate/misplace monthly amounts
+        $this->db->select('id, user_id, firm_id, year, purchase_date as date, bill_amount, amount as base_amount, added_on, status');
+        $this->db->where([
+            'user_id' => $user['id'],
+            'firm_id' => $firm_id,
+            'package_type' => 'Monthly',
+            'year' => $year
+        ]);
+        $monthly_packages = $this->db->get('customer_packages')->result_array();
+
         $purchases = array();
         $acct_months_seen = array();
+        $acct_split_seen = array();
 
         // 1. Process actual purchases from purchases table
         if (!empty($purchases_db)) {
@@ -835,26 +846,44 @@ class Reports extends CI_Controller
                 $ym  = !empty($p['date']) ? date('Y-m', strtotime($p['date'])) : '';
 
                 if ($sid === '1') {
-                    // Deduplicate Account Work per month
-                    if (isset($acct_months_seen[$ym])) {
-                        continue; // Skip duplicate Account Work purchase in same month
+                    $svc_label  = trim((string)($p['service'] ?? ''));
+                    $period_val = trim((string)($p['period_value'] ?? ''));
+
+                    // Upfront combined purchase inserted by Services::buyservice() covers all months already stored in customer_packages
+                    if (
+                        !empty($monthly_packages)
+                        && $period_val === ''
+                        && in_array($svc_label, array(
+                            'Account Work Monthly',
+                            'Account Work Monthly (Wallet)',
+                            'Account Work Monthly (Credit Limit)'
+                        ), true)
+                    ) {
+                        continue;
                     }
-                    $acct_months_seen[$ym] = true;
+
+                    // Keep both halves of a split Wallet + Credit Limit auto-debit while still deduplicating retries
+                    if ($period_val !== '' && (strpos($svc_label, 'Auto-Debit Wallet') !== false || strpos($svc_label, 'Auto-Debit Credit Limit') !== false)) {
+                        $split_part = (strpos($svc_label, 'Auto-Debit Credit Limit') !== false) ? 'credit' : 'wallet';
+                        $split_key  = $ym . '|' . $period_val . '|' . $split_part;
+                        if (isset($acct_split_seen[$split_key])) {
+                            continue;
+                        }
+                        $acct_split_seen[$split_key] = true;
+                        $acct_months_seen[$ym] = true;
+                    } else {
+                        // Deduplicate Account Work per month
+                        if (isset($acct_months_seen[$ym])) {
+                            continue; // Skip duplicate Account Work purchase in same month
+                        }
+                        $acct_months_seen[$ym] = true;
+                    }
                 }
                 $purchases[] = $p;
             }
         }
-        
+
         // 2. Add Monthly Account Work packages to purchases array for display (only for months not already covered)
-        $this->db->select('id, user_id, firm_id, year, purchase_date as date, bill_amount, amount as base_amount, added_on, status');
-        $this->db->where([
-            'user_id' => $user['id'], 
-            'firm_id' => $firm_id,
-            'package_type' => 'Monthly',
-            'year' => $year
-        ]);
-        $monthly_packages = $this->db->get('customer_packages')->result_array();
-        
         if (!empty($monthly_packages)) {
             $has_multiple_rows = count($monthly_packages) > 1;
 

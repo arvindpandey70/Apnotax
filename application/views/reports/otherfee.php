@@ -89,7 +89,7 @@ if($this->session->flashdata('year')!==NULL){
                                                     </tfoot>
                                                     <?php } ?>
                                                     </table>
-                                                    <div id="acc_json" class="d-none"><?= json_encode($result); ?></div>
+                                                    <div id="acc_json" class="d-none"><?= json_encode($result ?? $report ?? []); ?></div>
                                                 </div>
                                             </div>
                                         </div>

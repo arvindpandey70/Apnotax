@@ -420,7 +420,7 @@ class Services extends RestController
         if (!empty($token) && !empty($service_id)) {
             $user = $this->account->verify_token($token);
             if (!empty($user) && is_array($user) && $user['role'] == 'customer') {
-                $options = $this->master->getserviceoptions(array('service_id' => $service_id, 'status' => 1), 'all');
+                $options = $this->master->get_active_service_options($service_id);
                 $pricing = array();
                 $display_names = array();
                 if (!empty($options)) {

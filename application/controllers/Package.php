@@ -142,6 +142,7 @@ class Package extends CI_Controller
 
         // All services (exclude id=1 / account-work) with options
         $all_services = $this->master->getservices(['status' => 1, 'id>' => 1]);
+        $this->master->ensure_default_service_options($all_services);
         $services_with_options = array();
         if (!empty($all_services)) {
             foreach ($all_services as $svc) {
@@ -887,6 +888,7 @@ class Package extends CI_Controller
 
         // All services (exclude id=1 / account-work) with options
         $all_services = $this->master->getservices(['status' => 1, 'id>' => 1]);
+        $this->master->ensure_default_service_options($all_services);
         $services_with_options = array();
         if (!empty($all_services)) {
             foreach ($all_services as $svc) {

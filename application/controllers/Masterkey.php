@@ -204,6 +204,7 @@ class Masterkey extends CI_Controller
 
         // Get all services for dropdown
         $data['services'] = $this->master->getservices(array(), 'all');
+        $this->master->ensure_default_service_options($data['services']);
 
         // Get all service options
         $service_options = $this->master->getserviceoptions(array(), 'all');

@@ -28,6 +28,7 @@
                 <div class="table-responsive">
                     <table class="table table-bordered">
                         <?php
+                        $is_monthly_pkg = (!empty($pkg_type) && $pkg_type === 'Monthly') || (!empty($package['package_type']) && $package['package_type'] === 'Monthly');
                         $row_gst_rate = isset($gst_rate) ? floatval($gst_rate) : 18.0;
                         $total_all_subtotal = 0;
                         $total_all_gst = 0;
@@ -64,14 +65,14 @@
                                 $row_gst = ($row_gst_rate > 0 && !empty($gst_enabled) && $row_fee > 0) ? round(($row_fee * $row_gst_rate) / 100, 2) : 0;
                                 $show_days    = $is_paid ? ($month['display_days']   ?? $month['days'])    : ($month['days'] ?? $month['due_days'] ?? 0);
 
-                                // Monthly packages use Other Fee; accounting packages use Accounts Fee plus Other Fee.
-                                $row_base  = (float)($month['outstanding'] ?? 0) + $row_fee;
-                                $row_total = round($row_base + $row_gst, 2);
+                                $row_total = round($row_fee + $row_gst, 2);
 
                                 // Paid & Balance:
-                                // If month is confirmed/paid, paid amount matches row_total (not old turnover payments like 6,333.33)
+                                // For Turnover packages, show the actual amount deducted in acc_payment when available;
+                                // for Monthly packages or external purchase-based other fees, match row_total.
                                 if ($is_paid) {
-                                    $display_paid = $row_total;
+                                    $raw_paid = !empty($month['paid']) ? (float)$month['paid'] : 0;
+                                    $display_paid = (!$is_monthly_pkg && empty($month_other_fee) && $raw_paid > 0) ? $raw_paid : $row_total;
                                     $display_balance = 0;
                                 } else {
                                     $display_paid = (!empty($month['paid']) && (float)$month['paid'] < $row_total) ? (float)$month['paid'] : 0;

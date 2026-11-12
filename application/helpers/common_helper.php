@@ -630,6 +630,26 @@ if (!function_exists('ensure_accountancy_fy_months')) {
 
         $datetime = date('Y-m-d H:i:s');
 
+        // Load existing FY rows once and index by Y-m so non-01 dates do not create duplicates or misses.
+        $existing_rows = $CI->db
+            ->where('user_id', $user_id)
+            ->where('firm_id', $firm_id)
+            ->where('date >=', $fy['start'])
+            ->where('date <=', $fy['end'])
+            ->order_by('date', 'ASC')
+            ->get('accountancy')
+            ->result_array();
+
+        $existing_by_ym = array();
+        foreach ($existing_rows as $row) {
+            if (!empty($row['date'])) {
+                $ym_key = date('Y-m', strtotime($row['date']));
+                if (!isset($existing_by_ym[$ym_key])) {
+                    $existing_by_ym[$ym_key] = $row;
+                }
+            }
+        }
+
         for ($idx = 1; $idx <= $max_index; $idx++) {
             if ($idx <= 9) {
                 $m = $idx + 3;
@@ -640,6 +660,7 @@ if (!function_exists('ensure_accountancy_fy_months')) {
             }
 
             $month_start = sprintf('%04d-%02d-01', $y, $m);
+            $month_ym = sprintf('%04d-%02d', $y, $m);
             $next_m = $m + 1;
             $next_y = $y;
             if ($next_m > 12) {
@@ -648,11 +669,7 @@ if (!function_exists('ensure_accountancy_fy_months')) {
             }
             $default_due_date = sprintf('%04d-%02d-06', $next_y, $next_m);
 
-            $existing = $CI->db->get_where('accountancy', [
-                'user_id' => $user_id,
-                'firm_id' => $firm_id,
-                'date'    => $month_start
-            ])->unbuffered_row('array');
+            $existing = isset($existing_by_ym[$month_ym]) ? $existing_by_ym[$month_ym] : null;
 
             if (empty($existing)) {
                 $acc_data = array(
@@ -760,6 +777,86 @@ if (!function_exists('calculate_accountancy_fee')) {
             'status' => true,
             'package' => $selected_slab,
             'fees' => round($fees, 2)
+        );
+    }
+}
+
+if (!function_exists('calculate_turnover_monthly_fees')) {
+    /**
+     * Calculate month-wise incremental accountancy fees for Turnover packages.
+     *
+     * Confirmed/paid months keep the fee locked at payment time so adding
+     * turnover in later months never alters earlier months; subsequent months
+     * only reflect the extra slab difference over prior charged fees.
+     */
+    function calculate_turnover_monthly_fees($accountancy, $package_name, $gst_enabled = false)
+    {
+        $monthly_fees = array();
+        $cumulative_turnover = 0.0;
+        $cumulative_charged_fee = 0.0;
+        $last_package = array('name' => $package_name);
+
+        if (empty($accountancy) || !is_array($accountancy)) {
+            return array(
+                'monthly_fees' => $monthly_fees,
+                'total_fee'    => 0.0,
+                'package'      => $last_package
+            );
+        }
+
+        foreach ($accountancy as $idx => $single) {
+            if (empty($single['date'])) {
+                $monthly_fees[$idx] = 0.0;
+                continue;
+            }
+
+            $row_turnover = isset($single['turnover']) ? (float)$single['turnover'] : 0.0;
+            $cumulative_turnover += $row_turnover;
+
+            $fee_info = calculate_accountancy_fee($package_name, $cumulative_turnover);
+            if (!empty($fee_info['package'])) {
+                $last_package = $fee_info['package'];
+            }
+            $current_cumulative_fee = (!empty($fee_info['status']) && isset($fee_info['fees']))
+                ? (float)$fee_info['fees']
+                : $cumulative_charged_fee;
+
+            $incremental_fee = max(0.0, round($current_cumulative_fee - $cumulative_charged_fee, 2));
+
+            $paid = !empty($single['paid']) ? (float)$single['paid'] : 0.0;
+            $paid_acc_fee = !empty($single['paid_acc_fee']) ? (float)$single['paid_acc_fee'] : 0.0;
+            $other_fee = !empty($single['other_fee']) ? (float)$single['other_fee'] : 0.0;
+            $is_confirmed = (($single['auto_debit_status'] ?? '') === 'Confirmed');
+
+            if ($is_confirmed && ($paid > 0 || $paid_acc_fee > 0)) {
+                // Keep confirmed/paid months locked to the net fee recorded at payment time
+                if ($paid_acc_fee > 0) {
+                    if ($other_fee > 0 && abs($paid - ($paid_acc_fee + $other_fee)) <= 0.05) {
+                        $month_fee = round($paid_acc_fee, 2);
+                    } else {
+                        $month_fee = max(0.0, round($paid_acc_fee - $other_fee, 2));
+                    }
+                } else {
+                    // Legacy acc_payment rows created without populating acc_fee
+                    $gross_with_gst = round(($incremental_fee + $other_fee) * 1.18, 2);
+                    if ($gst_enabled && $incremental_fee > 0 && abs($paid - $gross_with_gst) <= 1.00) {
+                        $month_fee = $incremental_fee;
+                    } else {
+                        $month_fee = max(0.0, round($paid - $other_fee, 2));
+                    }
+                }
+            } else {
+                $month_fee = $incremental_fee;
+            }
+
+            $monthly_fees[$idx] = $month_fee;
+            $cumulative_charged_fee = round($cumulative_charged_fee + $month_fee, 2);
+        }
+
+        return array(
+            'monthly_fees' => $monthly_fees,
+            'total_fee'    => $cumulative_charged_fee,
+            'package'      => $last_package
         );
     }
 }

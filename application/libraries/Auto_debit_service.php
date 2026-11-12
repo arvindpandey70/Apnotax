@@ -612,6 +612,7 @@ class Auto_debit_service
         $this->CI->db->where("due_date <=", $today);
         $this->CI->db->where("turnover >", 0);
         $this->CI->db->group_by(array("user_id", "firm_id", "date"));
+        $this->CI->db->order_by("date", "ASC");
 
         $query = $this->CI->db->get();
         if (!$query || $query->num_rows() == 0) {
@@ -659,6 +660,7 @@ class Auto_debit_service
         $this->CI->db->where("due_date <=", $today);
         $this->CI->db->where("turnover >", 0);
         $this->CI->db->group_by(array("firm_id", "date"));
+        $this->CI->db->order_by("date", "ASC");
 
         $query = $this->CI->db->get();
         if (!$query || $query->num_rows() == 0) {
@@ -742,50 +744,24 @@ class Auto_debit_service
             return array('status' => false, 'message' => 'No turnover data.');
         }
 
-        $turnovers = array_column($accountancy, 'turnover');
-        $total_turnover = array_sum($turnovers);
-        $name = ($cpackage['package_id'] == 1) ? 'Accountancy Prime' : 'Accountancy Premium';
-        $package = $this->CI->master->getpackages(['name' => $name, 'turnover>' => $total_turnover], 'single');
+        $customer = $this->CI->customer->getcustomers(['t1.user_id' => $user_id], 'single');
+        $gst_enabled = !empty($customer) && !empty($customer['gst_enabled']) && $customer['gst_enabled'] == 1;
 
-        // Calculate fee for this specific entry
-        $fees = 0;
-        if ($name === 'Accountancy Prime') {
-            $gto = $total_turnover / 100000;
-            if ($gto <= 0) $fees = 0;
-            elseif ($gto <= 25) $fees = (12000 / 25) * $gto;
-            elseif ($gto <= 50) $fees = (20000 / 50) * $gto;
-            elseif ($gto <= 75) $fees = (25000 / 75) * $gto;
-            elseif ($gto <= 100) $fees = (30000 / 100) * $gto;
-            else $fees = 30000 + (($gto - 100) * (10000 / 100));
-            $fees = round($fees, 2);
-        } elseif ($name === 'Accountancy Premium') {
-            $gto = $total_turnover / 100000;
-            if ($gto <= 0) $fees = 0;
-            elseif ($gto <= 25) $fees = (15000 / 25) * $gto;
-            elseif ($gto <= 50) $fees = (24000 / 50) * $gto;
-            elseif ($gto <= 75) $fees = (30000 / 75) * $gto;
-            elseif ($gto <= 100) $fees = (36000 / 100) * $gto;
-            else $fees = 36000 + (($gto - 100) * (15000 / 100));
-            $fees = round($fees, 2);
-        } else {
-            if (!empty($package['turnover']) && !empty($package['rate'])) {
-                $fees = ($total_turnover / $package['turnover']) * $package['rate'];
+        $name = ($cpackage['package_id'] == 1) ? 'Accountancy Prime' : 'Accountancy Premium';
+        $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled);
+        $acc_fees = 0.0;
+        foreach ($accountancy as $idx => $acct_item) {
+            if (!empty($acct_item['date']) && $acct_item['date'] === $acc_date) {
+                $acc_fees = isset($turnover_calc['monthly_fees'][$idx]) ? (float)$turnover_calc['monthly_fees'][$idx] : 0.0;
+                break;
             }
         }
-
-        $activeMonthsCount = 0;
-        foreach ($accountancy as $acct) {
-            if (isset($acct['turnover']) && $acct['turnover'] > 0) $activeMonthsCount++;
-        }
-        $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-        $acc_fees = round($monthlyAccountsFee, 2);
 
         $other_fee = $acct_row['other_fee'] ?? 0;
         $total_required = round($acc_fees + $other_fee, 2);
 
         if ($total_required <= 0) {
-            $this->CI->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $acct_row['id']]);
-            return array('status' => true, 'message' => 'Zero fee entry auto-confirmed.');
+            return array('status' => true, 'message' => 'Zero extra fee due; no debit required.');
         }
 
         // Idempotency check: Ensure acc_payment row doesn't already exist for this user, firm, month, and year

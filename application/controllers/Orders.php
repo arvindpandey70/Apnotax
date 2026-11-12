@@ -623,9 +623,33 @@ class Orders extends CI_Controller
                                     'firm_id' => $firm_id
                                 ]);
                                 
-                                // If turnover is empty and record exists, delete it
-                                if ((empty($turnover) && $turnover != 0) && $getprev->num_rows() > 0) {
+                                // If turnover is left blank on an existing row, never delete paid/confirmed/other_fee/elapsed months
+                                $is_blank_turnover = (trim((string)$turnover) === '');
+                                if ($is_blank_turnover && $getprev->num_rows() > 0) {
                                     $previous = $getprev->unbuffered_row('array');
+                                    $date_ym = substr($date, 0, 7);
+                                    $has_payment = $this->db
+                                        ->where('user_id', $user_id)
+                                        ->where('firm_id', $firm_id)
+                                        ->where('status', 1)
+                                        ->where("DATE_FORMAT(acc_date, '%Y-%m') = " . $this->db->escape($date_ym), null, false)
+                                        ->get('acc_payment')
+                                        ->num_rows() > 0;
+                                    $is_confirmed = (($previous['auto_debit_status'] ?? '') === 'Confirmed');
+                                    $has_other_fee = ((float)($previous['other_fee'] ?? 0) > 0);
+                                    $is_elapsed_month = ($date <= date('Y-m-01'));
+
+                                    if ($has_payment || $is_confirmed) {
+                                        continue;
+                                    }
+                                    if ($is_elapsed_month || $has_other_fee) {
+                                        $this->service->updateturnover([
+                                            'turnover'   => 0,
+                                            'updated_on' => date('Y-m-d H:i:s')
+                                        ], ['id' => $previous['id']]);
+                                        continue;
+                                    }
+
                                     $where = ['id' => $previous['id']];
                                     $result = $this->service->deleteturnover($where);
                                     if ($result['status'] === true) {
@@ -635,9 +659,9 @@ class Orders extends CI_Controller
                                     }
                                     continue;
                                 }
-                                
+
                                 // Skip if empty and no record exists
-                                if (empty($turnover) && $turnover != 0) {
+                                if ($is_blank_turnover) {
                                     continue;
                                 }
                                 

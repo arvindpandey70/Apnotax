@@ -494,6 +494,7 @@ class Service_model extends CI_Model
                 DATE_FORMAT(t1.date, '%Y-%m') AS month,
                 t1.*,
                 COALESCE(SUM(t2.amount), 0) AS paid,
+                COALESCE(SUM(t2.acc_fee), 0) AS paid_acc_fee,
                 MAX(t2.added_on) AS payment_date
             FROM
                 {$accountancy_table} t1
@@ -544,6 +545,7 @@ class Service_model extends CI_Model
                     $single['added_on'] = date('Y-m-d H:i:s');
                     $single['updated_on'] = date('Y-m-d H:i:s');
                     $single['paid'] = $totalpaid - $paid;
+                    $single['paid_acc_fee'] = 0;
                     $array[] = $single;
                 }
             }

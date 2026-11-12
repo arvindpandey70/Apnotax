@@ -881,109 +881,29 @@ class Reports extends RestController
                         $total_fees = $total_other = $total_paid = $total_penalty = $total_days = 0;
                         $outstanding = $total = $balance = 0;
                         $total_sum = 0;
-                        // Slab-based Prime plan fee, per updated remuneration table
-                        if (isset($name) && $name === 'Accountancy Prime') {
-                            $gto = $total_turnover / 100000;
-                            if ($gto <= 0) {
-                                $fees = 0;
-                            } else if ($gto <= 25) {
-                                $fees = (12000 / 25) * $gto;
-                            } else if ($gto <= 50) {
-                                $fees = (20000 / 50) * $gto;
-                            } else if ($gto <= 75) {
-                                $fees = (25000 / 75) * $gto;
-                            } else if ($gto <= 100) {
-                                $fees = (30000 / 100) * $gto;
-                            } else {
-                                $fees = 30000 + (($gto - 100) * (10000 / 100));
-                            }
-                            $fees = round($fees, 2);
-                        } else if (isset($name) && $name === 'Accountancy Premium') {
-                            // Slab-based Premium plan fee, per updated remuneration table
-                            $gto = $total_turnover / 100000;
-                            if ($gto <= 0) {
-                                $fees = 0;
-                            } else if ($gto <= 25) {
-                                $fees = (15000 / 25) * $gto;
-                            } else if ($gto <= 50) {
-                                $fees = (24000 / 50) * $gto;
-                            } else if ($gto <= 75) {
-                                $fees = (30000 / 75) * $gto;
-                            } else if ($gto <= 100) {
-                                $fees = (36000 / 100) * $gto;
-                            } else {
-                                $fees = 36000 + (($gto - 100) * (15000 / 100));
-                            }
-                            $fees = round($fees, 2);
-                        } else {
-                            $fees = $total_turnover / $package['turnover'];
-                            $fees *= $package['rate'];
-                        }
-                        $count = count($accountancy);
-
-                        $last = end($accountancy);
-
-                        if ($last['date'] == '') {
-
-                            $count--;
-
+                        $customer_row = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
+                        $gst_enabled_api = !empty($customer_row) && !empty($customer_row['gst_enabled']) && $customer_row['gst_enabled'] == 1;
+                        $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled_api);
+                        $monthly_fees = $turnover_calc['monthly_fees'];
+                        if (!empty($turnover_calc['package'])) {
+                            $package = $turnover_calc['package'];
                         }
 
-                        $activeMonthsCount = 0;
-
-                        foreach ($accountancy as $acct) {
-
-                            if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-
-                                $activeMonthsCount++;
-
-                            }
-
-                        }
-
-                        $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-
-                        $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-
-                        foreach ($accountancy as $single) {
-
+                        foreach ($accountancy as $idx => $single) {
                             $days = $paid = $penalty = 0;
-
-                            $paid = !empty($single['paid']) ? $single['paid'] : 0;
+                            $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
 
                             // Outstanding should be the previous month's balance (unpaid amount)
                             $outstanding = $balance;
 
-                            if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-
-                                if (isset($single['turnover']) && $single['turnover'] > 0) {
-
-                                    $acc_fees = $monthlyAccountsFee;
-
-                                } else {
-
-                                    $acc_fees = 0;
-
-                                }
-
-                            } else {
-
-                                if ($single['date'] != '') {
-
-                                    $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-                                } else {
-
-                                    $acc_fees = 0;
-
-                                }
-
-                            }
+                            $acc_fees = isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0;
                             $other_fee = $single['other_fee'] ?? 0;
                             $total_other += $other_fee;
                             $balance = $outstanding + $acc_fees + $other_fee;
-                            if ($single['due_date'] < $date && $paid < $balance) {
+                            $is_confirmed = (($single['auto_debit_status'] ?? '') === 'Confirmed');
+                            if ($is_confirmed) {
+                                $balance = 0;
+                            } elseif ($single['due_date'] < $date && $paid < $balance) {
                                 $balance -= $paid;
                                 $date1 = new DateTime($single['due_date']);
                                 $date2 = new DateTime($date);
@@ -1017,7 +937,7 @@ class Reports extends RestController
 
                             $renewalMethod = 'AUTO_WALLET';
 
-                            $auto_debit_status_label = isset($auto_debit_status) ? $auto_debit_status : 'Pending';
+                            $auto_debit_status_label = $single['auto_debit_status'] ?? 'Pending';
 
 
                             if ($single['date'] != '') {
@@ -1238,108 +1158,26 @@ class Reports extends RestController
                 $total_paid = 0;
                 $outstanding = $total = 0;
 
-                // Slab-based Prime plan fee, per updated remuneration table
-                if (isset($name) && $name === 'Accountancy Prime') {
-                    $gto = $total_turnover / 100000;
-                    if ($gto <= 0) {
-                        $fees = 0;
-                    } else if ($gto <= 25) {
-                        $fees = (12000 / 25) * $gto;
-                    } else if ($gto <= 50) {
-                        $fees = (20000 / 50) * $gto;
-                    } else if ($gto <= 75) {
-                        $fees = (25000 / 75) * $gto;
-                    } else if ($gto <= 100) {
-                        $fees = (30000 / 100) * $gto;
-                    } else {
-                        $fees = 30000 + (($gto - 100) * (10000 / 100));
-                    }
-                    $fees = round($fees, 2);
-                } else if (isset($name) && $name === 'Accountancy Premium') {
-                    // Slab-based Premium plan fee, per updated remuneration table
-                    $gto = $total_turnover / 100000;
-                    if ($gto <= 0) {
-                        $fees = 0;
-                    } else if ($gto <= 25) {
-                        $fees = (15000 / 25) * $gto;
-                    } else if ($gto <= 50) {
-                        $fees = (24000 / 50) * $gto;
-                    } else if ($gto <= 75) {
-                        $fees = (30000 / 75) * $gto;
-                    } else if ($gto <= 100) {
-                        $fees = (36000 / 100) * $gto;
-                    } else {
-                        $fees = 36000 + (($gto - 100) * (15000 / 100));
-                    }
-                    $fees = round($fees, 2);
-                } else {
-                    $fees = $total_turnover / $package['turnover'];
-                    $fees *= $package['rate'];
-                }
-                $count = count($accountancy);
-
-                $last = end($accountancy);
-
-                if ($last['date'] == '') {
-
-                    $count--;
-
+                $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
+                $gst_enabled = !empty($customer) && !empty($customer['gst_enabled']) && $customer['gst_enabled'] == 1;
+                $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled);
+                $monthly_fees = $turnover_calc['monthly_fees'];
+                if (!empty($turnover_calc['package'])) {
+                    $package = $turnover_calc['package'];
                 }
 
-                $activeMonthsCount = 0;
-
-                foreach ($accountancy as $acct) {
-
-                    if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-
-                        $activeMonthsCount++;
-
-                    }
-
-                }
-
-                $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-
-                $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-
-                foreach ($accountancy as $single) {
-
+                foreach ($accountancy as $idx => $single) {
                     $days = $paid = $penalty = 0;
-
-                    $paid = !empty($single['paid']) ? $single['paid'] : 0;
-
+                    $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
                     $outstanding = $total;
-
-                    if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-
-                        if (isset($single['turnover']) && $single['turnover'] > 0) {
-
-                            $acc_fees = $monthlyAccountsFee;
-
-                        } else {
-
-                            $acc_fees = 0;
-
-                        }
-
-                    } else {
-
-                        if ($single['date'] != '') {
-
-                            $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-                        } else {
-
-                            $acc_fees = 0;
-
-                        }
-
-                    }
+                    $acc_fees = isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0;
                     $other_fee = $single['other_fee'] ?? 0;
                     $balance = $outstanding + $acc_fees + $other_fee;
+                    $is_confirmed = (($single['auto_debit_status'] ?? '') === 'Confirmed');
 
-                    if ($single['due_date'] < $date && $paid < $balance) {
+                    if ($is_confirmed) {
+                        $balance = 0;
+                    } elseif ($single['due_date'] < $date && $paid < $balance) {
                         $balance -= $paid;
                         $date1 = new DateTime($single['due_date']);
                         $date2 = new DateTime($date);
@@ -1353,6 +1191,9 @@ class Reports extends RestController
                         $penalty = round($penalty);
                     } else {
                         $balance -= $paid;
+                    }
+                    if ($balance < 0) {
+                        $balance = 0;
                     }
                     $total = $balance + $penalty;
 
@@ -1395,9 +1236,7 @@ class Reports extends RestController
                     }
                 }
 
-                // Check customer GST setting and calculate GST if enabled
-                $customer = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
-                $gst_enabled = !empty($customer) && !empty($customer['gst_enabled']) && $customer['gst_enabled'] == 1;
+                // Calculate GST if enabled
                 $gst_rate = $gst_enabled ? 18.0 : 0.0;
                 $gst_amount = $gst_enabled ? round(($last_month_balance * $gst_rate) / 100, 2) : 0;
                 $total_with_gst = round($last_month_balance + $gst_amount, 2);
@@ -1551,108 +1390,23 @@ class Reports extends RestController
                 $total_paid = 0;
                 $outstanding = $total = 0;
 
-                // Slab-based Prime plan fee, per updated remuneration table
-                if (isset($name) && $name === 'Accountancy Prime') {
-                    $gto = $total_turnover / 100000;
-                    if ($gto <= 0) {
-                        $fees = 0;
-                    } else if ($gto <= 25) {
-                        $fees = (12000 / 25) * $gto;
-                    } else if ($gto <= 50) {
-                        $fees = (20000 / 50) * $gto;
-                    } else if ($gto <= 75) {
-                        $fees = (25000 / 75) * $gto;
-                    } else if ($gto <= 100) {
-                        $fees = (30000 / 100) * $gto;
-                    } else {
-                        $fees = 30000 + (($gto - 100) * (10000 / 100));
-                    }
-                    $fees = round($fees, 2);
-                } else if (isset($name) && $name === 'Accountancy Premium') {
-                    // Slab-based Premium plan fee, per updated remuneration table
-                    $gto = $total_turnover / 100000;
-                    if ($gto <= 0) {
-                        $fees = 0;
-                    } else if ($gto <= 25) {
-                        $fees = (15000 / 25) * $gto;
-                    } else if ($gto <= 50) {
-                        $fees = (24000 / 50) * $gto;
-                    } else if ($gto <= 75) {
-                        $fees = (30000 / 75) * $gto;
-                    } else if ($gto <= 100) {
-                        $fees = (36000 / 100) * $gto;
-                    } else {
-                        $fees = 36000 + (($gto - 100) * (15000 / 100));
-                    }
-                    $fees = round($fees, 2);
-                } else {
-                    $fees = $total_turnover / $package['turnover'];
-                    $fees *= $package['rate'];
-                }
-                $count = count($accountancy);
+                $customer_check = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
+                $gst_enabled_check = !empty($customer_check) && !empty($customer_check['gst_enabled']) && $customer_check['gst_enabled'] == 1;
+                $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled_check);
+                $monthly_fees = $turnover_calc['monthly_fees'];
 
-                $last = end($accountancy);
-
-                if ($last['date'] == '') {
-
-                    $count--;
-
-                }
-
-                $activeMonthsCount = 0;
-
-                foreach ($accountancy as $acct) {
-
-                    if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-
-                        $activeMonthsCount++;
-
-                    }
-
-                }
-
-                $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-
-                $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-
-                foreach ($accountancy as $single) {
-
+                foreach ($accountancy as $idx => $single) {
                     $days = $paid = $penalty = 0;
-
-                    $paid = !empty($single['paid']) ? $single['paid'] : 0;
-
+                    $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
                     $outstanding = $total;
-
-                    if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-
-                        if (isset($single['turnover']) && $single['turnover'] > 0) {
-
-                            $acc_fees = $monthlyAccountsFee;
-
-                        } else {
-
-                            $acc_fees = 0;
-
-                        }
-
-                    } else {
-
-                        if ($single['date'] != '') {
-
-                            $acc_fees = $count > 0 ? ($fees / $count) : 0;
-
-                        } else {
-
-                            $acc_fees = 0;
-
-                        }
-
-                    }
+                    $acc_fees = isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0;
                     $other_fee = $single['other_fee'] ?? 0;
                     $balance = $outstanding + $acc_fees + $other_fee;
+                    $is_confirmed = (($single['auto_debit_status'] ?? '') === 'Confirmed');
 
-                    if ($single['due_date'] < $date && $paid < $balance) {
+                    if ($is_confirmed) {
+                        $balance = 0;
+                    } elseif ($single['due_date'] < $date && $paid < $balance) {
                         $balance -= $paid;
                         $date1 = new DateTime($single['due_date']);
                         $date2 = new DateTime($date);
@@ -1666,6 +1420,9 @@ class Reports extends RestController
                         $penalty = round($penalty);
                     } else {
                         $balance -= $paid;
+                    }
+                    if ($balance < 0) {
+                        $balance = 0;
                     }
                     $total = $balance + $penalty;
 
@@ -1696,8 +1453,6 @@ class Reports extends RestController
                 }
 
                 // Check customer GST setting to validate payment amount
-                $customer_check = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
-                $gst_enabled_check = !empty($customer_check) && !empty($customer_check['gst_enabled']) && $customer_check['gst_enabled'] == 1;
                 $gst_amount_check = $gst_enabled_check ? round(($last_month_balance * 18) / 100, 2) : 0;
                 $expected_total = $last_month_balance + $gst_amount_check;
 
@@ -1770,6 +1525,7 @@ class Reports extends RestController
                             'acc_date' => $acc_date,
                             'date' => $payment_date,
                             'amount' => $month_total,
+                            'acc_fee' => $month_payment_amount,
                             'added_by' => $user['id']
                         );
 
@@ -1777,6 +1533,11 @@ class Reports extends RestController
                         if ($result['status'] !== true) {
                             $payment_success = false;
                             $payment_errors[] = $result['message'] . ' (Month: ' . (!empty($month_data['date']) ? date('F Y', strtotime($month_data['date'])) : 'N/A') . ', Amount: ₹' . number_format($month_payment_amount, 2) . ')';
+                        } else {
+                            $this->db->where('user_id', $user_id)
+                                     ->where('firm_id', $firm_id)
+                                     ->where('date', $acc_date)
+                                     ->update('accountancy', ['auto_debit_status' => 'Confirmed']);
                         }
                     }
 

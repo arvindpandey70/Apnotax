@@ -459,32 +459,25 @@ class Reports extends CI_Controller
         $turnover = array_sum($turnovers);
         $total_turnover = $turnover;
         $name = $cpackage['package_id'] == 1 ? 'Accountancy Prime' : 'Accountancy Premium';
-        $fee_data = $this->calculate_accountancy_fee($name, $total_turnover);
-        if (!$fee_data['status']) {
-            return array('status' => false, 'message' => $fee_data['message'], 'redirect' => 'home/');
+
+        $customer_row = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
+        $gst_enabled = !empty($customer_row) && !empty($customer_row['gst_enabled']) && $customer_row['gst_enabled'] == 1;
+
+        // Calculate month-wise incremental fees so confirmed/paid months keep their deducted amount
+        // and subsequent months only charge the extra slab difference.
+        $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled);
+        $monthly_fees = $turnover_calc['monthly_fees'];
+        $package = $turnover_calc['package'];
+        if (empty($package) || !isset($package['rate'])) {
+            $fee_data = $this->calculate_accountancy_fee($name, $total_turnover);
+            if (!$fee_data['status']) {
+                return array('status' => false, 'message' => $fee_data['message'], 'redirect' => 'home/');
+            }
+            $package = $fee_data['package'];
         }
-        $package = $fee_data['package'];
 
         $date = date('Y-m-d');
         $percent = 2 / 100;
-
-        $fees = $fee_data['fees'];
-
-        $count = count($accountancy);
-        $last = end($accountancy);
-        if ($last['date'] == '') {
-            $count--;
-        }
-
-        $activeMonthsCount = 0;
-        foreach ($accountancy as $acct) {
-            if (isset($acct['turnover']) && $acct['turnover'] > 0) {
-                $activeMonthsCount++;
-            }
-        }
-
-        $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-        $acc_fees_default = $count > 0 ? ($fees / $count) : 0;
 
         $total_fees = $total_other = $total_paid = $total_penalty = $total_days = 0;
         $outstanding = $total = $balance = 0;
@@ -493,26 +486,15 @@ class Reports extends CI_Controller
         $records = array();
         $unpaid_months = array();
 
-        foreach ($accountancy as &$single) {
+        foreach ($accountancy as $idx => &$single) {
             $days = $paid = $penalty = 0;
-            $paid = !empty($single['paid']) ? $single['paid'] : 0;
+            $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
+            $row_turnover = isset($single['turnover']) ? (float)$single['turnover'] : 0;
 
             // Outstanding should be the previous month's balance
             $outstanding = $balance;
 
-            if (isset($name) && ($name === 'Accountancy Prime' || $name === 'Accountancy Premium')) {
-                if (isset($single['turnover']) && $single['turnover'] > 0) {
-                    $acc_fees = $monthlyAccountsFee;
-                } else {
-                    $acc_fees = 0;
-                }
-            } else {
-                if ($single['date'] != '') {
-                    $acc_fees = $acc_fees_default;
-                } else {
-                    $acc_fees = 0;
-                }
-            }
+            $acc_fees = isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0;
 
             $other_fee = $single['other_fee'] ?? 0;
             $total_other += $other_fee;
@@ -538,7 +520,12 @@ class Reports extends CI_Controller
                 $display_penalty = round($display_penalty);
             }
 
-            if ($single['due_date'] < $date && $paid < $balance) {
+            $auto_debit_status = $single['auto_debit_status'] ?? 'Pending';
+            $is_confirmed = ($auto_debit_status === 'Confirmed');
+
+            if ($is_confirmed) {
+                $balance = 0;
+            } elseif ($single['due_date'] < $date && $paid < $balance) {
                 $balance = round($balance - $paid, 2);
                 $date1 = new DateTime($single['due_date']);
                 $date2 = new DateTime($date);
@@ -565,15 +552,19 @@ class Reports extends CI_Controller
             $total = round($balance + $penalty, 2);
 
             // --- AUTO DEBIT LOGIC ---
-            $auto_debit_status = $single['auto_debit_status'] ?? 'Pending';
-            if ($auto_debit_status !== 'Confirmed' && $single['due_date'] <= $date && $total > 0) {
+            if ($auto_debit_status !== 'Confirmed' && !empty($single['id']) && $single['due_date'] <= $date && $total > 0) {
                 $this->load->model('Wallet_model', 'wallet');
                 $wallet_bal = $this->wallet->getwalletbalance($user_id);
                 if ($wallet_bal >= $total) {
                     $payment_data = array(
                         'user_id' => $user_id,
                         'firm_id' => $firm_id,
+                        'year' => $year,
+                        'date' => $date,
                         'amount' => $total,
+                        'acc_fee' => round($acc_fees + $other_fee, 2),
+                        'payment_mode' => 'Wallet',
+                        'status' => 1,
                         'acc_date' => $single['date'],
                         'added_on' => date('Y-m-d H:i:s'),
                         'updated_on' => date('Y-m-d H:i:s')
@@ -610,12 +601,10 @@ class Reports extends CI_Controller
                 $renewalMethod = $isPastMonth ? 'ADMIN' : 'AUTO_WALLET';
 
                 if ($auto_debit_status_label !== 'Confirmed') {
-                    if ($isPastMonth) {
-                        if ($total > 0) {
-                            $auto_debit_status_label = 'Admin Renew';
-                        } else {
-                            $auto_debit_status_label = 'Renewed';
-                        }
+                    if ($total <= 0 && $balance <= 0) {
+                        $auto_debit_status_label = ($row_turnover > 0) ? 'No Extra Fee' : 'Renewed';
+                    } elseif ($isPastMonth) {
+                        $auto_debit_status_label = 'Admin Renew';
                     } else {
                         if (!empty($single['due_date'])) {
                             $dueDateObj = new DateTime($single['due_date']);
@@ -642,8 +631,10 @@ class Reports extends CI_Controller
             $due_date = $single['due_date'] != '' ? date('d-m-Y F', strtotime($single['due_date'])) : '--';
 
             $auto_debit_status_html = '';
-            if ($auto_debit_status_label === 'Confirmed') {
-                $auto_debit_status_html = '<span class="badge bg-success">Confirmed</span>';
+            if ($auto_debit_status_label === 'Confirmed' || $auto_debit_status_label === 'No Extra Fee') {
+                $auto_debit_status_html = '<span class="badge bg-success">' . $auto_debit_status_label . '</span>';
+            } elseif ($auto_debit_status_label === 'Renewed') {
+                $auto_debit_status_html = '<span class="badge bg-secondary">Renewed</span>';
             } else {
                 $auto_debit_status_html = '<span class="badge bg-warning text-dark">' . $auto_debit_status_label . '</span>';
             }
@@ -652,6 +643,8 @@ class Reports extends CI_Controller
             if ($auto_debit_status_label === 'Confirmed' || $paid > 0) {
                 $p_date = !empty($single['payment_date']) ? date('d-m-Y', strtotime($single['payment_date'])) : '';
                 $action_date_html = '<span class="text-success font-weight-bold"><i class="fa fa-check-circle"></i> Confirmed<br><small>' . $p_date . '</small></span>';
+            } elseif ($total <= 0 && $balance <= 0) {
+                $action_date_html = '<span class="text-success"><i class="fa fa-check-circle"></i> No Due</span>';
             } else {
                 if ($renewalMethod === 'ADMIN') {
                     $action_date_html = 'Admin Renew';
@@ -668,6 +661,7 @@ class Reports extends CI_Controller
                 'outstanding' => round($outstanding, 2),
                 'gto' => round($single['turnover'], 2),
                 'acc_fees' => round($acc_fees, 2),
+                'other_fee' => round($other_fee, 2),
                 'penalty' => round($penalty, 2),
                 'display_penalty' => $display_penalty,
                 'gross_total' => round($gross_total + $penalty, 2),
@@ -2064,6 +2058,7 @@ class Reports extends CI_Controller
         $data['first_month_data'] = $acc_data['first_month_data'];
         $data['payment_month_range'] = $acc_data['payment_month_range'];
         $data['package'] = $acc_data['package'];
+        $data['pkg_type'] = $acc_data['pkg_type'] ?? 'Turnover';
         $data['year'] = $year;
         $data['firm_id'] = $firm_id;
         $data['user_id'] = $user_id;
@@ -2231,6 +2226,9 @@ class Reports extends CI_Controller
                 $used_credit_total += $c_deduct;
 
                 if ($w_deduct > 0 && $c_deduct > 0) {
+                    $w_acc_fee = round($month_payment_amount * ($w_deduct / $month_total), 2);
+                    $c_acc_fee = round($month_payment_amount - $w_acc_fee, 2);
+
                     // Split payment row 1: Wallet
                     $p1 = array(
                         'user_id'      => $user_id,
@@ -2241,7 +2239,7 @@ class Reports extends CI_Controller
                         'amount'       => $w_deduct,
                         'payment_mode' => 'Wallet',
                         'status'       => 1,
-                        'acc_fee'      => round($month_payment_amount * ($w_deduct / $month_total), 2),
+                        'acc_fee'      => $w_acc_fee,
                         'added_by'     => $user['id'],
                         'added_on'     => date('Y-m-d H:i:s'),
                         'updated_on'   => date('Y-m-d H:i:s')
@@ -2258,7 +2256,7 @@ class Reports extends CI_Controller
                         'amount'       => $c_deduct,
                         'payment_mode' => 'Credit Limit',
                         'status'       => 1,
-                        'acc_fee'      => round($month_payment_amount * ($c_deduct / $month_total), 2),
+                        'acc_fee'      => $c_acc_fee,
                         'added_by'     => $user['id'],
                         'added_on'     => date('Y-m-d H:i:s'),
                         'updated_on'   => date('Y-m-d H:i:s')

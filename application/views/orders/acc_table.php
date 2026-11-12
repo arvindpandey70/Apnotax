@@ -52,23 +52,7 @@
                 $fees = ($total_turnover / $turnover_div) * $rate_mult;
             }
 
-            $count = count($accountancy);
-            $last = end($accountancy);
-            if (!empty($last) && empty($last['date'])) {
-                $count--;
-            }
-
-            $activeMonthsCount = 0;
-            foreach ($accountancy as $acct) {
-                if (isset($acct['turnover']) && (float)$acct['turnover'] > 0) {
-                    $activeMonthsCount++;
-                }
-            }
-
-            $monthlyAccountsFee = $activeMonthsCount > 0 ? ($fees / $activeMonthsCount) : 0;
-            $acc_fees_default = $count > 0 ? ($fees / $count) : 0;
-
-            // Customer GST setting
+            // Customer GST setting (resolve before fee calculation for legacy row fallback)
             if (!isset($gst_enabled)) {
                 $CI = &get_instance();
                 $cust_u_id = !empty($accountancy[0]['user_id']) ? $accountancy[0]['user_id'] : ($user_id ?? 0);
@@ -79,25 +63,19 @@
                 $row_gst_rate = !empty($gst_enabled) ? (isset($gst_rate) ? (float)$gst_rate : 18.0) : 0.0;
             }
 
-            foreach ($accountancy as $single) {
+            $turnover_calc = calculate_turnover_monthly_fees($accountancy, $pkg_name, !empty($gst_enabled));
+            $monthly_fees = $turnover_calc['monthly_fees'];
+            if (empty($package) && !empty($turnover_calc['package'])) {
+                $package = $turnover_calc['package'];
+            }
+
+            foreach ($accountancy as $idx => $single) {
                 $days = 0;
                 $single_turnover = !empty($single['turnover']) ? (float)$single['turnover'] : 0;
                 $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
                 $outstanding = $balance;
 
-                if (isset($pkg_name) && ($pkg_name === 'Accountancy Prime' || $pkg_name === 'Accountancy Premium')) {
-                    if ($single_turnover > 0) {
-                        $acc_fees = $monthlyAccountsFee;
-                    } else {
-                        $acc_fees = 0;
-                    }
-                } else {
-                    if (!empty($single['date'])) {
-                        $acc_fees = $acc_fees_default;
-                    } else {
-                        $acc_fees = 0;
-                    }
-                }
+                $acc_fees = isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0;
 
                 $is_turnover_pkg = (isset($pkg_name) && ($pkg_name === 'Accountancy Prime' || $pkg_name === 'Accountancy Premium'));
                 $other_fee = (!$is_turnover_pkg && !empty($single['other_fee'])) ? (float)$single['other_fee'] : 0;
@@ -120,7 +98,7 @@
                 $is_paid = $is_confirmed || ($row_total > 0 && $paid >= $row_total) || ($row_total == 0 && $paid == 0);
 
                 if ($is_confirmed || ($row_total > 0 && $paid >= $row_total)) {
-                    $display_paid = $row_total;
+                    $display_paid = ($paid > 0) ? $paid : $row_total;
                     $balance = 0;
                 } else {
                     $display_paid = ($paid < $row_total) ? $paid : 0;
@@ -175,7 +153,9 @@
                     $renewalMethod = $isPastMonth ? 'ADMIN' : 'AUTO_WALLET';
                     
                     if ($auto_debit_status_label !== 'Confirmed') {
-                        if ($isPastMonth) {
+                        if ($row_total <= 0 && $balance <= 0) {
+                            $auto_debit_status_label = ($single_turnover > 0) ? 'No Extra Fee' : 'Renewed';
+                        } elseif ($isPastMonth) {
                             $auto_debit_status_label = ($balance > 0) ? 'Admin Renew' : 'Renewed';
                         } else {
                             if (!empty($row_due_date)) {
@@ -246,8 +226,10 @@
                     </td>
                     <td><?= $days; ?></td>
                     <td class="text-center">
-                        <?php if ($auto_debit_status_label === 'Confirmed') { ?>
-                            <span class="badge bg-success">Confirmed</span>
+                        <?php if ($auto_debit_status_label === 'Confirmed' || $auto_debit_status_label === 'No Extra Fee') { ?>
+                            <span class="badge bg-success"><?= $auto_debit_status_label ?></span>
+                        <?php } elseif ($auto_debit_status_label === 'Renewed') { ?>
+                            <span class="badge bg-secondary">Renewed</span>
                         <?php } else { ?>
                             <span class="badge bg-warning text-dark"><?= $auto_debit_status_label ?></span>
                         <?php } ?>

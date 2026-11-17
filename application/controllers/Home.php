@@ -93,8 +93,14 @@ class Home extends CI_Controller
 
     public function triggerautodebit()
     {
+        checklogin();
+        if ($this->session->role != 'admin' && $this->session->role != 'superadmin') {
+            redirect('home/');
+            return;
+        }
         $this->load->library('auto_debit_service');
         $this->auto_debit_service->process_all_due_auto_debits();
+        redirect('home/');
     }
 
     /**

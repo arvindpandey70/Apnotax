@@ -746,9 +746,11 @@ if (!function_exists('calculate_accountancy_fee')) {
             return (float)$left['turnover'] <=> (float)$right['turnover'];
         });
 
+        // Slab turnover is the upper limit (< 25 Lac means up to 25,00,000).
+        // An exact limit stays on that slab.
         $selected_slab = end($regular_slabs);
         foreach ($regular_slabs as $slab) {
-            if ($total_turnover < (float)$slab['turnover']) {
+            if ($total_turnover <= (float)$slab['turnover']) {
                 $selected_slab = $slab;
                 break;
             }
@@ -785,9 +787,9 @@ if (!function_exists('calculate_turnover_monthly_fees')) {
     /**
      * Calculate month-wise incremental accountancy fees for Turnover packages.
      *
-     * Confirmed/paid months keep the fee locked at payment time so adding
-     * turnover in later months never alters earlier months; subsequent months
-     * only reflect the extra slab difference over prior charged fees.
+     * Each month shows only the extra slab fee on cumulative GTO. Payment does
+     * not replace that fee: a confirmed month keeps the slab amount, not the
+     * amount that happened to be paid.
      */
     function calculate_turnover_monthly_fees($accountancy, $package_name, $gst_enabled = false)
     {
@@ -821,34 +823,7 @@ if (!function_exists('calculate_turnover_monthly_fees')) {
                 ? (float)$fee_info['fees']
                 : $cumulative_charged_fee;
 
-            $incremental_fee = max(0.0, round($current_cumulative_fee - $cumulative_charged_fee, 2));
-
-            $paid = !empty($single['paid']) ? (float)$single['paid'] : 0.0;
-            $paid_acc_fee = !empty($single['paid_acc_fee']) ? (float)$single['paid_acc_fee'] : 0.0;
-            $other_fee = !empty($single['other_fee']) ? (float)$single['other_fee'] : 0.0;
-            $is_confirmed = (($single['auto_debit_status'] ?? '') === 'Confirmed');
-
-            if ($is_confirmed && ($paid > 0 || $paid_acc_fee > 0)) {
-                // Keep confirmed/paid months locked to the net fee recorded at payment time
-                if ($paid_acc_fee > 0) {
-                    if ($other_fee > 0 && abs($paid - ($paid_acc_fee + $other_fee)) <= 0.05) {
-                        $month_fee = round($paid_acc_fee, 2);
-                    } else {
-                        $month_fee = max(0.0, round($paid_acc_fee - $other_fee, 2));
-                    }
-                } else {
-                    // Legacy acc_payment rows created without populating acc_fee
-                    $gross_with_gst = round(($incremental_fee + $other_fee) * 1.18, 2);
-                    if ($gst_enabled && $incremental_fee > 0 && abs($paid - $gross_with_gst) <= 1.00) {
-                        $month_fee = $incremental_fee;
-                    } else {
-                        $month_fee = max(0.0, round($paid - $other_fee, 2));
-                    }
-                }
-            } else {
-                $month_fee = $incremental_fee;
-            }
-
+            $month_fee = max(0.0, round($current_cumulative_fee - $cumulative_charged_fee, 2));
             $monthly_fees[$idx] = $month_fee;
             $cumulative_charged_fee = round($cumulative_charged_fee + $month_fee, 2);
         }

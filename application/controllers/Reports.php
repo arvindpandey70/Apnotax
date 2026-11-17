@@ -54,9 +54,10 @@ class Reports extends CI_Controller
             return (float)$left['turnover'] <=> (float)$right['turnover'];
         });
 
+        // Slab turnover is the upper limit. An exact limit stays on that slab.
         $selected_slab = end($regular_slabs);
         foreach ($regular_slabs as $slab) {
-            if ($total_turnover < (float)$slab['turnover']) {
+            if ($total_turnover <= (float)$slab['turnover']) {
                 $selected_slab = $slab;
                 break;
             }
@@ -550,36 +551,6 @@ class Reports extends CI_Controller
                 $balance = 0;
             }
             $total = round($balance + $penalty, 2);
-
-            // --- AUTO DEBIT LOGIC ---
-            if ($auto_debit_status !== 'Confirmed' && !empty($single['id']) && $single['due_date'] <= $date && $total > 0) {
-                $this->load->model('Wallet_model', 'wallet');
-                $wallet_bal = $this->wallet->getwalletbalance($user_id);
-                if ($wallet_bal >= $total) {
-                    $payment_data = array(
-                        'user_id' => $user_id,
-                        'firm_id' => $firm_id,
-                        'year' => $year,
-                        'date' => $date,
-                        'amount' => $total,
-                        'acc_fee' => round($acc_fees + $other_fee, 2),
-                        'payment_mode' => 'Wallet',
-                        'status' => 1,
-                        'acc_date' => $single['date'],
-                        'added_on' => date('Y-m-d H:i:s'),
-                        'updated_on' => date('Y-m-d H:i:s')
-                    );
-                    $this->db->insert('acc_payment', $payment_data);
-                    $this->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $single['id']]);
-                    $paid += $total;
-                    $auto_debit_status = 'Confirmed';
-                    $single['auto_debit_status'] = 'Confirmed';
-                    $single['payment_date'] = date('Y-m-d H:i:s');
-                    $balance = 0;
-                    $total = 0;
-                }
-            }
-            // --- END AUTO DEBIT LOGIC ---
 
             $total_sum += $total;
             $total_fees += $acc_fees;

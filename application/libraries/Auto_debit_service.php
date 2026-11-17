@@ -610,7 +610,6 @@ class Auto_debit_service
         $this->CI->db->where("due_date IS NOT NULL", NULL, FALSE);
         $this->CI->db->where("due_date !=", '');
         $this->CI->db->where("due_date <=", $today);
-        $this->CI->db->where("turnover >", 0);
         $this->CI->db->group_by(array("user_id", "firm_id", "date"));
         $this->CI->db->order_by("date", "ASC");
 
@@ -658,7 +657,6 @@ class Auto_debit_service
         $this->CI->db->where("due_date IS NOT NULL", NULL, FALSE);
         $this->CI->db->where("due_date !=", '');
         $this->CI->db->where("due_date <=", $today);
-        $this->CI->db->where("turnover >", 0);
         $this->CI->db->group_by(array("firm_id", "date"));
         $this->CI->db->order_by("date", "ASC");
 
@@ -757,8 +755,10 @@ class Auto_debit_service
             }
         }
 
-        $other_fee = $acct_row['other_fee'] ?? 0;
-        $total_required = round($acc_fees + $other_fee, 2);
+        $other_fee = (float)($acct_row['other_fee'] ?? 0);
+        $base_fee = round($acc_fees + $other_fee, 2);
+        $gst_amount = $gst_enabled ? round($base_fee * 0.18, 2) : 0;
+        $total_required = round($base_fee + $gst_amount, 2);
 
         if ($total_required <= 0) {
             return array('status' => true, 'message' => 'Zero extra fee due; no debit required.');
@@ -808,7 +808,7 @@ class Auto_debit_service
         $this->CI->db->trans_start();
 
         if ($wallet_deduction > 0 && $credit_deduction > 0) {
-            // Split insertion in acc_payment
+            $wallet_acc_fee = round($base_fee * ($wallet_deduction / $total_required), 2);
             $this->CI->db->insert('acc_payment', [
                 'date'         => $today,
                 'user_id'      => $user_id,
@@ -820,7 +820,7 @@ class Auto_debit_service
                 'status'       => 1,
                 'added_on'     => $datetime,
                 'updated_on'   => $datetime,
-                'acc_fee'      => round($acc_fees * ($wallet_deduction / $total_required), 2)
+                'acc_fee'      => $wallet_acc_fee
             ]);
 
             $this->CI->db->insert('acc_payment', [
@@ -834,7 +834,7 @@ class Auto_debit_service
                 'status'       => 1,
                 'added_on'     => $datetime,
                 'updated_on'   => $datetime,
-                'acc_fee'      => round($acc_fees * ($credit_deduction / $total_required), 2)
+                'acc_fee'      => round($base_fee - $wallet_acc_fee, 2)
             ]);
         } else {
             $pmode = ($credit_deduction > 0) ? 'Credit Limit' : 'Wallet';
@@ -849,7 +849,7 @@ class Auto_debit_service
                 'status'       => 1,
                 'added_on'     => $datetime,
                 'updated_on'   => $datetime,
-                'acc_fee'      => $acc_fees
+                'acc_fee'      => $base_fee
             ]);
         }
 

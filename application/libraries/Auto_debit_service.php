@@ -56,10 +56,13 @@ class Auto_debit_service
         $this->CI->db->select('id, user_id');
         $this->CI->db->from('customer_packages');
         $this->CI->db->where('status', 1);
+        $this->CI->db->where('package_type', 'Monthly');
         $this->CI->db->where('expiry_date <=', $today);
         $this->CI->db->where('expiry_date IS NOT NULL', NULL, FALSE);
         $this->CI->db->where('expiry_date !=', '');
         $this->CI->db->where('request', 0);
+        $this->CI->db->where("(payment_status IS NULL OR payment_status = 0)", NULL, FALSE);
+        $this->CI->db->where("(auto_debit_status IS NULL OR auto_debit_status != 'Confirmed')", NULL, FALSE);
         $this->CI->db->order_by('expiry_date', 'ASC');
         $query_cp = $this->CI->db->get();
 
@@ -125,8 +128,11 @@ class Auto_debit_service
         $this->CI->db->from('customer_packages');
         $this->CI->db->where('user_id', $user_id);
         $this->CI->db->where('status', 1);
+        $this->CI->db->where('package_type', 'Monthly');
         $this->CI->db->where('expiry_date <=', $today);
         $this->CI->db->where('request', 0);
+        $this->CI->db->where("(payment_status IS NULL OR payment_status = 0)", NULL, FALSE);
+        $this->CI->db->where("(auto_debit_status IS NULL OR auto_debit_status != 'Confirmed')", NULL, FALSE);
         $this->CI->db->order_by('expiry_date', 'ASC');
         $query_cp = $this->CI->db->get();
         if ($query_cp && $query_cp->num_rows() > 0) {
@@ -433,15 +439,26 @@ class Auto_debit_service
             return array('status' => false, 'message' => 'Not a Monthly customer package.');
         }
 
+        if (($pkg['auto_debit_status'] ?? '') === 'Confirmed' || (int)($pkg['payment_status'] ?? 0) === 1) {
+            return array('status' => true, 'message' => 'Already paid.');
+        }
+
         // Check if package is due
         $exp = !empty($pkg['expiry_date']) ? strtotime($pkg['expiry_date']) : 0;
         if (!$exp || $exp > strtotime($today)) {
             return array('status' => false, 'message' => 'Package is not due.');
         }
 
-        // Calculate rate
-        $m_rate = (float)($pkg['bill_amount'] ?? 0);
-        if ($m_rate <= 0 && !empty($pkg['amount'])) $m_rate = (float)$pkg['amount'];
+        // amount is the single-month rate. bill_amount can be a multi-month total.
+        $month_amount = (float)($pkg['amount'] ?? 0);
+        $bill_amount = (float)($pkg['bill_amount'] ?? 0);
+        if ($month_amount > 0 && $bill_amount > 0) {
+            $m_rate = min($month_amount, $bill_amount);
+        } elseif ($month_amount > 0) {
+            $m_rate = $month_amount;
+        } else {
+            $m_rate = $bill_amount;
+        }
         if ($m_rate <= 0) {
             $account_work_service = $this->CI->master->getservices(['id' => 1, 'status' => 1], 'single');
             $m_rate = !empty($account_work_service['rate']) ? (float)$account_work_service['rate'] : 5000;
@@ -462,12 +479,9 @@ class Auto_debit_service
             'period_value' => $billing_period
         ]);
         if ($dup_check && $dup_check->num_rows() > 0) {
-            $new_expiry = $this->calculate_next_billing_date($pkg['expiry_date'], 'Monthly');
             $this->CI->db->update('customer_packages', [
                 'payment_status'    => 1,
                 'auto_debit_status' => 'Confirmed',
-                'purchase_date'     => $today,
-                'expiry_date'       => $new_expiry,
                 'updated_on'        => $datetime
             ], ['id' => $package_id]);
             log_message('info', "[Auto_debit_service] Duplicate charge prevented for Customer Package ID: {$package_id}, period: {$billing_period}");
@@ -575,15 +589,10 @@ class Auto_debit_service
             ]);
         }
 
-        // Calculate next expiry date
-        $new_expiry = $this->calculate_next_billing_date($pkg['expiry_date'], 'Monthly');
-
-        // Update customer_packages record
+        // Keep purchase_date and expiry_date. Each row is one month; moving them caused the same month to be charged again.
         $this->CI->db->update('customer_packages', [
             'payment_status'    => 1,
             'auto_debit_status' => 'Confirmed',
-            'purchase_date'     => $today,
-            'expiry_date'       => $new_expiry,
             'updated_on'        => $datetime
         ], ['id' => $package_id]);
 
@@ -594,8 +603,8 @@ class Auto_debit_service
             return array('status' => false, 'message' => 'Transaction failed.');
         }
 
-        log_message('info', "[Auto_debit_service] SUCCESS auto-debit for Account Work Package ID: {$package_id}. Wallet: ₹{$wallet_deduction}, Credit: ₹{$credit_deduction}. Next expiry: {$new_expiry}");
-        return array('status' => true, 'message' => 'Auto-debit successful.', 'next_expiry' => $new_expiry);
+        log_message('info', "[Auto_debit_service] SUCCESS auto-debit for Account Work Package ID: {$package_id}. Wallet: ₹{$wallet_deduction}, Credit: ₹{$credit_deduction}.");
+        return array('status' => true, 'message' => 'Auto-debit successful.');
     }
 
     /**
@@ -610,6 +619,7 @@ class Auto_debit_service
         $this->CI->db->where("due_date IS NOT NULL", NULL, FALSE);
         $this->CI->db->where("due_date !=", '');
         $this->CI->db->where("due_date <=", $today);
+        $this->CI->db->where("(turnover > 0 OR other_fee > 0)", NULL, FALSE);
         $this->CI->db->group_by(array("user_id", "firm_id", "date"));
         $this->CI->db->order_by("date", "ASC");
 
@@ -657,6 +667,7 @@ class Auto_debit_service
         $this->CI->db->where("due_date IS NOT NULL", NULL, FALSE);
         $this->CI->db->where("due_date !=", '');
         $this->CI->db->where("due_date <=", $today);
+        $this->CI->db->where("(turnover > 0 OR other_fee > 0)", NULL, FALSE);
         $this->CI->db->group_by(array("firm_id", "date"));
         $this->CI->db->order_by("date", "ASC");
 
@@ -690,8 +701,7 @@ class Auto_debit_service
     {
         $today = date('Y-m-d');
         $datetime = date('Y-m-d H:i:s');
-
-        // Fetch accountancy record
+        $acc_date = date('Y-m-d', strtotime($acc_date));
         $acct_row = $this->CI->db->get_where('accountancy', [
             'user_id' => $user_id,
             'firm_id' => $firm_id,
@@ -716,19 +726,16 @@ class Auto_debit_service
         $from = $yearval['year1'] . "-04-01";
         $to   = $yearval['year2'] . "-03-31";
 
-        // Fetch active customer package for turnover type
-        $cpackage = $this->CI->db->get_where('customer_packages', [
-            'user_id' => $user_id,
-            'firm_id' => $firm_id,
-            'status' => 1
-        ])->unbuffered_row('array');
+        // Only the Turnover package for this financial year. A Monthly row must not block this debit.
+        $this->CI->db->where('user_id', $user_id);
+        $this->CI->db->where('firm_id', $firm_id);
+        $this->CI->db->where('status', 1);
+        $this->CI->db->where('year', $year);
+        $this->CI->db->where("(package_type IS NULL OR package_type = '' OR package_type = 'Turnover')", null, false);
+        $this->CI->db->order_by('id', 'DESC');
+        $cpackage = $this->CI->db->get('customer_packages')->row_array();
         if (empty($cpackage)) {
-            return array('status' => false, 'message' => 'No active customer package.');
-        }
-
-        $pkg_type = !empty($cpackage['package_type']) ? $cpackage['package_type'] : 'Turnover';
-        if ($pkg_type === 'Monthly') {
-            return array('status' => false, 'message' => 'Monthly package handled separately.');
+            return array('status' => false, 'message' => 'No active Turnover package for this year.');
         }
 
         $user_id_escaped = $this->CI->db->escape($user_id);
@@ -749,7 +756,7 @@ class Auto_debit_service
         $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled);
         $acc_fees = 0.0;
         foreach ($accountancy as $idx => $acct_item) {
-            if (!empty($acct_item['date']) && $acct_item['date'] === $acc_date) {
+            if (!empty($acct_item['date']) && date('Y-m-d', strtotime($acct_item['date'])) === $acc_date) {
                 $acc_fees = isset($turnover_calc['monthly_fees'][$idx]) ? (float)$turnover_calc['monthly_fees'][$idx] : 0.0;
                 break;
             }
@@ -764,19 +771,31 @@ class Auto_debit_service
             return array('status' => true, 'message' => 'Zero extra fee due; no debit required.');
         }
 
-        // Idempotency check: Ensure acc_payment row doesn't already exist for this user, firm, month, and year
+        // Collect only what is still unpaid. An old partial payment must not close the month.
         $m_val = (int)date('m', strtotime($acc_date));
         $y_val = (int)date('Y', strtotime($acc_date));
         $existing_acc_payment = $this->CI->db
-            ->select('id')
+            ->select('COALESCE(SUM(amount), 0) AS paid, COALESCE(SUM(acc_fee), 0) AS paid_fee', false)
             ->from('acc_payment')
             ->where('user_id', $user_id)
             ->where('firm_id', $firm_id)
             ->where('status', 1)
             ->where('MONTH(acc_date) = ' . (int)$m_val, null, false)
             ->where('YEAR(acc_date) = ' . (int)$y_val, null, false)
-            ->get();
-        if ($existing_acc_payment && $existing_acc_payment->num_rows() > 0) {
+            ->get()
+            ->row_array();
+        $already_paid = (float)($existing_acc_payment['paid'] ?? 0);
+        $already_fee = (float)($existing_acc_payment['paid_fee'] ?? 0);
+        if ($already_fee > 0) {
+            $base_remaining = max(0, round($base_fee - $already_fee, 2));
+        } else {
+            $base_remaining = max(0, round($base_fee - $already_paid, 2));
+        }
+        $gst_remaining = $gst_enabled ? round($base_remaining * 0.18, 2) : 0;
+        $total_required = round($base_remaining + $gst_remaining, 2);
+        $base_fee = $base_remaining;
+
+        if ($total_required <= 0) {
             $this->CI->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $acct_row['id']]);
             return array('status' => true, 'message' => 'Turnover payment already recorded.');
         }

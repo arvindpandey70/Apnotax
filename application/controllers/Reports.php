@@ -54,9 +54,10 @@ class Reports extends CI_Controller
             return (float)$left['turnover'] <=> (float)$right['turnover'];
         });
 
+        // Slab turnover is the upper limit. An exact limit stays on that slab.
         $selected_slab = end($regular_slabs);
         foreach ($regular_slabs as $slab) {
-            if ($total_turnover < (float)$slab['turnover']) {
+            if ($total_turnover <= (float)$slab['turnover']) {
                 $selected_slab = $slab;
                 break;
             }

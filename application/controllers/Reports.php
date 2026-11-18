@@ -464,8 +464,7 @@ class Reports extends CI_Controller
         $customer_row = $this->customer->getcustomers(['t1.user_id' => $user_id], 'single');
         $gst_enabled = !empty($customer_row) && !empty($customer_row['gst_enabled']) && $customer_row['gst_enabled'] == 1;
 
-        // Calculate month-wise incremental fees so confirmed/paid months keep their deducted amount
-        // and subsequent months only charge the extra slab difference.
+        // Split the cumulative slab fee equally across months that have turnover filled.
         $turnover_calc = calculate_turnover_monthly_fees($accountancy, $name, $gst_enabled);
         $monthly_fees = $turnover_calc['monthly_fees'];
         $package = $turnover_calc['package'];
@@ -487,9 +486,29 @@ class Reports extends CI_Controller
         $records = array();
         $unpaid_months = array();
 
+        // A confirmed month keeps the amount that was actually deducted.
+        // Later turnover must not recalculate that locked payment onto other months.
+        $allocated_paid = array();
+        $covered_by_payment = array();
+        foreach ($accountancy as $idx => $single) {
+            $raw_paid = !empty($single['paid']) ? (float)$single['paid'] : 0.0;
+            $month_fee = (isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0.0) + (float)($single['other_fee'] ?? 0);
+            $month_gst = $gst_enabled ? round($month_fee * 0.18, 2) : 0.0;
+            $month_due = round($month_fee + $month_gst, 2);
+            $already_confirmed = (($single['auto_debit_status'] ?? '') === 'Confirmed');
+            $settled = $already_confirmed || ($month_due > 0 && ($raw_paid + 0.009) >= $month_due);
+            if ($settled) {
+                $allocated_paid[$idx] = $raw_paid > 0 ? round($raw_paid, 2) : $month_due;
+                $covered_by_payment[$idx] = true;
+            } else {
+                $allocated_paid[$idx] = round($raw_paid, 2);
+                $covered_by_payment[$idx] = false;
+            }
+        }
+
         foreach ($accountancy as $idx => &$single) {
             $days = $paid = $penalty = 0;
-            $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
+            $paid = isset($allocated_paid[$idx]) ? (float)$allocated_paid[$idx] : 0.0;
             $row_turnover = isset($single['turnover']) ? (float)$single['turnover'] : 0;
 
             // Outstanding should be the previous month's balance
@@ -522,6 +541,9 @@ class Reports extends CI_Controller
             }
 
             $auto_debit_status = $single['auto_debit_status'] ?? 'Pending';
+            if (!empty($covered_by_payment[$idx])) {
+                $auto_debit_status = 'Confirmed';
+            }
             $is_confirmed = ($auto_debit_status === 'Confirmed');
 
             if ($is_confirmed) {

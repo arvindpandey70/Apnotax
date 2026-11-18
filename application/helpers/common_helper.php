@@ -785,17 +785,18 @@ if (!function_exists('calculate_accountancy_fee')) {
 
 if (!function_exists('calculate_turnover_monthly_fees')) {
     /**
-     * Calculate month-wise incremental accountancy fees for Turnover packages.
+     * Split the turnover slab fee equally across months that have turnover filled.
      *
-     * Each month shows only the extra slab fee on cumulative GTO. Payment does
-     * not replace that fee: a confirmed month keeps the slab amount, not the
-     * amount that happened to be paid.
+     * The slab is still chosen from cumulative GTO. That one fee is then
+     * divided only by months whose turnover is greater than zero (April and
+     * May, for example). Months with no turnover stay at zero, and the last
+     * filled month absorbs the paisa remainder so the shares add back to the slab fee.
      */
     function calculate_turnover_monthly_fees($accountancy, $package_name, $gst_enabled = false)
     {
         $monthly_fees = array();
         $cumulative_turnover = 0.0;
-        $cumulative_charged_fee = 0.0;
+        $eligible = array();
         $last_package = array('name' => $package_name);
 
         if (empty($accountancy) || !is_array($accountancy)) {
@@ -814,23 +815,48 @@ if (!function_exists('calculate_turnover_monthly_fees')) {
 
             $row_turnover = isset($single['turnover']) ? (float)$single['turnover'] : 0.0;
             $cumulative_turnover += $row_turnover;
-
-            $fee_info = calculate_accountancy_fee($package_name, $cumulative_turnover);
-            if (!empty($fee_info['package'])) {
-                $last_package = $fee_info['package'];
+            if ($row_turnover > 0) {
+                $eligible[] = $idx;
+            } else {
+                $monthly_fees[$idx] = 0.0;
             }
-            $current_cumulative_fee = (!empty($fee_info['status']) && isset($fee_info['fees']))
-                ? (float)$fee_info['fees']
-                : $cumulative_charged_fee;
+        }
 
-            $month_fee = max(0.0, round($current_cumulative_fee - $cumulative_charged_fee, 2));
-            $monthly_fees[$idx] = $month_fee;
-            $cumulative_charged_fee = round($cumulative_charged_fee + $month_fee, 2);
+        $fee_info = calculate_accountancy_fee($package_name, $cumulative_turnover);
+        if (!empty($fee_info['package'])) {
+            $last_package = $fee_info['package'];
+        }
+        $total_fee = (!empty($fee_info['status']) && isset($fee_info['fees']))
+            ? round((float)$fee_info['fees'], 2)
+            : 0.0;
+
+        $count = count($eligible);
+        if ($count === 0 || $total_fee <= 0) {
+            foreach ($eligible as $idx) {
+                $monthly_fees[$idx] = 0.0;
+            }
+            return array(
+                'monthly_fees' => $monthly_fees,
+                'total_fee'    => 0.0,
+                'package'      => $last_package
+            );
+        }
+
+        $share = round($total_fee / $count, 2);
+        $allocated = 0.0;
+        $last_offset = $count - 1;
+        foreach ($eligible as $offset => $idx) {
+            if ($offset === $last_offset) {
+                $monthly_fees[$idx] = round($total_fee - $allocated, 2);
+            } else {
+                $monthly_fees[$idx] = $share;
+                $allocated = round($allocated + $share, 2);
+            }
         }
 
         return array(
             'monthly_fees' => $monthly_fees,
-            'total_fee'    => $cumulative_charged_fee,
+            'total_fee'    => $total_fee,
             'package'      => $last_package
         );
     }

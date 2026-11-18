@@ -32,7 +32,7 @@
             $total_all_paid = 0;
             $total_all_balance = 0;
             $total_days = 0;
-            $outstanding = 0;
+            $opening_carry = 0;
             $balance = 0;
 
             $multiplier = !empty($this->multiplier) ? (float)$this->multiplier : 1;
@@ -73,7 +73,7 @@
                 $days = 0;
                 $single_turnover = !empty($single['turnover']) ? (float)$single['turnover'] : 0;
                 $paid = !empty($single['paid']) ? (float)$single['paid'] : 0;
-                $outstanding = $balance;
+                $opening = $opening_carry;
 
                 $acc_fees = isset($monthly_fees[$idx]) ? (float)$monthly_fees[$idx] : 0;
 
@@ -81,8 +81,7 @@
                 $other_fee = (!$is_turnover_pkg && !empty($single['other_fee'])) ? (float)$single['other_fee'] : 0;
                 $row_fee = $acc_fees + $other_fee; // Subtotal
                 $row_gst = ($row_gst_rate > 0 && !empty($gst_enabled) && $row_fee > 0) ? round(($row_fee * $row_gst_rate) / 100, 2) : 0;
-                $row_base = $outstanding + $row_fee;
-                $row_total = round($row_base + $row_gst, 2);
+                $row_total = round($row_fee + $row_gst, 2);
 
                 // Sanitize due_date to avoid sentinel 0000-00-00 dates
                 $raw_due = $single['due_date'] ?? '';
@@ -97,13 +96,13 @@
                 $is_confirmed = ($single['auto_debit_status'] ?? '') === 'Confirmed';
                 $is_paid = $is_confirmed || ($row_total > 0 && $paid >= $row_total) || ($row_total == 0 && $paid == 0);
 
-                if ($is_confirmed || ($row_total > 0 && $paid >= $row_total)) {
+                if ($is_paid) {
                     $display_paid = ($paid > 0) ? $paid : $row_total;
-                    $balance = 0;
                 } else {
-                    $display_paid = ($paid < $row_total) ? $paid : 0;
-                    $balance = max(0, round($row_total - $display_paid, 2));
+                    $display_paid = ($paid > 0 && $paid < $row_total) ? $paid : 0;
                 }
+                $balance = round($row_total + $opening - $display_paid, 2);
+                $opening_carry = $balance;
 
                 if (!empty($row_due_date) && $row_due_date < $date && $balance > 0) {
                     $date1 = new DateTime($row_due_date);
@@ -120,7 +119,7 @@
                 $total_all_gst += $row_gst;
                 $total_all_total += $row_total;
                 $total_all_paid += $display_paid;
-                $total_all_balance += $balance;
+                $total_all_balance = $balance;
 
                 $month = $single['date'] != '' ? date("Ym", strtotime($single['date'])) : '';
                 if ($month != '') {
@@ -183,7 +182,7 @@
                         <?= $single['date'] != '' ? date('F-y', strtotime($single['date'])) : '--'; ?>
                     </td>
                     <td class="cell-right">
-                        <?= $this->amount->toDecimal($outstanding, false); ?>
+                        <span class="<?= $opening < 0 ? 'text-success' : ''; ?>"><?= $this->amount->toDecimal($opening, false); ?></span>
                     </td>
                     <td class="cell-right">
                         <?= $this->amount->toDecimal($single['turnover'], false); ?>
@@ -219,7 +218,7 @@
                         <?php } ?>
                     </td>
                     <td class="cell-right">
-                        <?= $this->amount->toDecimal($balance, false); ?>
+                        <strong class="<?= $balance < 0 ? 'text-success' : ''; ?>"><?= $this->amount->toDecimal($balance, false); ?></strong>
                     </td>
                     <td>
                         <?= !empty($row_due_date) ? date('d-m-Y F', strtotime($row_due_date)) : '--'; ?>

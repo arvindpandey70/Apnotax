@@ -35,6 +35,8 @@
                         $total_all_sum = 0;
                         $total_all_paid = 0;
                         $total_all_balance = 0;
+                        $running_balance = 0;
+                        $opening_carry = 0;
                         ?>
                         <thead>
                             <tr>
@@ -67,27 +69,31 @@
 
                                 $row_total = round($row_fee + $row_gst, 2);
 
-                                // Paid & Balance:
-                                // For Turnover packages, show the actual amount deducted in acc_payment when available;
-                                // for Monthly packages or external purchase-based other fees, match row_total.
+                                // Opening is the previous balance. A negative opening is extra already
+                                // cut, so it is subtracted from this month's total. A positive
+                                // opening is a shortfall, so it is added. Balance is that adjusted
+                                // amount minus what was actually cut, and it becomes the next opening.
+                                $raw_paid = !empty($month['paid']) ? (float)$month['paid'] : 0;
+                                $opening = $opening_carry;
                                 if ($is_paid) {
-                                    $raw_paid = !empty($month['paid']) ? (float)$month['paid'] : 0;
                                     $display_paid = (!$is_monthly_pkg && empty($month_other_fee) && $raw_paid > 0) ? $raw_paid : $row_total;
-                                    $display_balance = 0;
                                 } else {
-                                    $display_paid = (!empty($month['paid']) && (float)$month['paid'] < $row_total) ? (float)$month['paid'] : 0;
-                                    $display_balance = max(0, round($row_total - $display_paid, 2));
+                                    $display_paid = ($raw_paid > 0 && $raw_paid < $row_total) ? $raw_paid : 0;
                                 }
+                                $adjusted = round($row_total + $opening, 2);
+                                $display_balance = round($adjusted - $display_paid, 2);
+                                $opening_carry = $display_balance;
+                                $running_balance = $opening_carry;
 
                                 $total_all_gst     += $row_gst;
                                 $total_all_subtotal += $row_fee;
                                 $total_all_sum     += $row_total;
                                 $total_all_paid    += $display_paid;
-                                $total_all_balance += $display_balance;
+                                $total_all_balance = $running_balance;
                             ?>
                                 <tr>
                                     <td><?= $month['month']; ?></td>
-                                    <td class="cell-right"><?= $this->amount->toDecimal($month['outstanding'], false); ?></td>
+                                    <td class="cell-right"><span class="<?= $opening < 0 ? 'text-success' : ''; ?>"><?= $this->amount->toDecimal($opening, false); ?></span></td>
                                     <td class="cell-right"><?= (!empty($month['acc_fees']) && (float)$month['acc_fees'] > 0) ? $this->amount->toDecimal($month['acc_fees'], false) : '--'; ?></td>
                                     <td class="cell-right">
                                         <?php if ($display_other > 0) { ?>
@@ -112,7 +118,7 @@
                                             <?= $this->amount->toDecimal($display_paid, false); ?>
                                         <?php } ?>
                                     </td>
-                                    <td class="cell-right"><strong><?= $this->amount->toDecimal($display_balance, false); ?></strong></td>
+                                    <td class="cell-right"><strong class="<?= $display_balance < 0 ? 'text-success' : ''; ?>"><?= $this->amount->toDecimal($display_balance, false); ?></strong></td>
                                     <td><?= $month['due_date']; ?></td>
                                     <td>
                                         <?php if ($show_days > 0) { ?>

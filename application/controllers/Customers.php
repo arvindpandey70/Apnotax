@@ -1088,8 +1088,19 @@ class Customers extends CI_Controller
         );
 
         if ($this->db->insert('acc_payment', $payment_data)) {
-            // Update auto_debit_status in accountancy table
+            // This month's amount includes earlier unpaid months, so those are settled too.
             $this->db->update('accountancy', ['auto_debit_status' => 'Confirmed'], ['id' => $id]);
+            if (!empty($date)) {
+                $this->db->where('user_id', $user_id);
+                $this->db->where('firm_id', $firm_id);
+                $this->db->where('date <=', $date);
+                $this->db->where('date !=', '');
+                $this->db->group_start();
+                $this->db->where('auto_debit_status !=', 'Confirmed');
+                $this->db->or_where('auto_debit_status IS NULL', null, false);
+                $this->db->group_end();
+                $this->db->update('accountancy', ['auto_debit_status' => 'Confirmed', 'updated_on' => date('Y-m-d H:i:s')]);
+            }
             
             // Add notification
             $this->common->savenotification(array(
